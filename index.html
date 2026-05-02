@@ -447,43 +447,44 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     const imgData = ctx.getImageData(0, 0, W, H);
     const d = imgData.data;
 
-    // 影判定（無彩色＋一定の明度範囲）
-    // strength 弱(1): 慎重 / 中(2): 普通 / 強(3): 積極的
+    // 影判定パラメータ
+    // satMax: 商品本体（緑の箱で彩度~20など）が削られないよう、低めに設定
+    // lumMin/lumMax: 影は通常 中～やや暗（120-200）に出る
+    // iterations: 反復回数（多いほど深く侵食）
     const params = [
       null,
-      { satMax: 30, lumMin: 60, lumMax: 200, iterations: 8  }, // 弱
-      { satMax: 40, lumMin: 50, lumMax: 215, iterations: 14 }, // 中
-      { satMax: 50, lumMin: 40, lumMax: 225, iterations: 20 }, // 強
+      { satMax: 12, lumMin: 80,  lumMax: 220, iterations: 12 }, // 弱
+      { satMax: 18, lumMin: 70,  lumMax: 230, iterations: 25 }, // 中
+      { satMax: 25, lumMin: 50,  lumMax: 240, iterations: 40 }, // 強
     ][shadowStrength];
 
     const isShadowColor = (px) => {
       const i = px * 4;
       const r = d[i], g = d[i+1], b = d[i+2];
       const minC = Math.min(r, g, b), maxC = Math.max(r, g, b);
-      const sat = maxC - minC; // 彩度近似
+      const sat = maxC - minC;
       const lum = (r + g + b) / 3;
       return sat <= params.satMax && lum >= params.lumMin && lum <= params.lumMax;
     };
 
-    // 反復的に「マスク境界の外側に隣接する」影色ピクセルを削っていく
-    // ただし「マスクの外側=背景」から「マスクの内側=商品」に侵食して影候補を除去
+    // 反復的にマスクを内側に侵食。「背景or半透明」に隣接する「影色のピクセル」を削る
+    // ポイント: フェザー領域も「背景側」として扱うため、判定は < 128
     const work = new Uint8Array(mask);
     for (let iter = 0; iter < params.iterations; iter++){
       const removed = [];
       for (let y = 1; y < H - 1; y++){
         for (let x = 1; x < W - 1; x++){
           const px = y * W + x;
-          if (work[px] === 0) continue; // 既に背景
-          // 4近傍に背景（mask=0）があるか
+          if (work[px] < 128) continue; // 既に背景or半透明（侵食対象ではない）
+          // 4近傍に「背景寄り（< 128）」があるか
           const hasBgNeighbor =
-            work[px - 1] === 0 || work[px + 1] === 0 ||
-            work[px - W] === 0 || work[px + W] === 0;
+            work[px - 1] < 128 || work[px + 1] < 128 ||
+            work[px - W] < 128 || work[px + W] < 128;
           if (!hasBgNeighbor) continue;
-          // 影色か判定
           if (isShadowColor(px)) removed.push(px);
         }
       }
-      if (removed.length === 0) break; // 削るものがなくなった
+      if (removed.length === 0) break;
       for (const px of removed) work[px] = 0;
     }
 
