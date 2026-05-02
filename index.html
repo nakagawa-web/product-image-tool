@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.0]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（茶色・暖色は保護）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.2]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影・反射を追加除去（穴埋め内蔵）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -426,6 +426,52 @@ async function ensureAiReady(progressCb){
   }
 }
 
+// マスクの穴埋め
+// 「商品マスクの内側にある背景領域（前景に囲まれた閉領域）」を不透明にする
+// 画像端から到達できる背景はそのまま、到達できない背景＝穴として埋める
+function fillMaskHoles(mask, W, H){
+  const N = W * H;
+  // 「背景到達可能」マップを作る
+  // 背景判定: mask < 128
+  const reachable = new Uint8Array(N);
+  const queue = new Int32Array(N);
+  let head = 0, tail = 0;
+
+  // 画像の四辺をシード（背景なら）
+  for (let x = 0; x < W; x++){
+    if (mask[x] < 128) { reachable[x] = 1; queue[tail++] = x; }
+    const bp = (H - 1) * W + x;
+    if (mask[bp] < 128) { reachable[bp] = 1; queue[tail++] = bp; }
+  }
+  for (let y = 1; y < H - 1; y++){
+    const lp = y * W, rp = y * W + W - 1;
+    if (mask[lp] < 128) { reachable[lp] = 1; queue[tail++] = lp; }
+    if (mask[rp] < 128) { reachable[rp] = 1; queue[tail++] = rp; }
+  }
+
+  // BFSで「画像端から繋がる背景」を全部マーク
+  while (head < tail){
+    const px = queue[head++];
+    const x = px % W, y = (px - x) / W;
+    if (x > 0)     { const np = px - 1; if (!reachable[np] && mask[np] < 128) { reachable[np] = 1; queue[tail++] = np; } }
+    if (x < W - 1) { const np = px + 1; if (!reachable[np] && mask[np] < 128) { reachable[np] = 1; queue[tail++] = np; } }
+    if (y > 0)     { const np = px - W; if (!reachable[np] && mask[np] < 128) { reachable[np] = 1; queue[tail++] = np; } }
+    if (y < H - 1) { const np = px + W; if (!reachable[np] && mask[np] < 128) { reachable[np] = 1; queue[tail++] = np; } }
+  }
+
+  // 背景判定だが画像端から到達できない = 穴 → 埋める
+  let filled = 0;
+  for (let i = 0; i < N; i++){
+    if (mask[i] < 128 && !reachable[i]) {
+      mask[i] = 255;
+      filled++;
+    }
+  }
+  if (typeof log === 'function' && filled > 0) {
+    log(`[DBG] 穴埋め: ${filled}px (${(filled/N*100).toFixed(2)}%)`);
+  }
+}
+
 // AIで背景除去：canvasのコンテキストにマスクを適用してアルファを書き戻す
 // 追加処理: ① マスク二値化（半透明問題解消） ② 影除去（無彩色グレー領域を縮める）
 async function aiRemoveBg(ctx, canvas, shadowStrength){
@@ -497,13 +543,13 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
 
     // 影判定パラメータ
     // satMax: 商品本体（緑の箱で彩度~20など）が削られないよう、低めに設定
-    // lumMin/lumMax: 影は通常 中～やや暗（120-200）に出る
+    // lumMin/lumMax: 影は中明度、白い反射は高明度。両方をカバーする広い範囲に
     // iterations: 反復回数（多いほど深く侵食）
     const params = [
       null,
-      { satMax: 12, lumMin: 80,  lumMax: 220, iterations: 12 }, // 弱
-      { satMax: 18, lumMin: 70,  lumMax: 230, iterations: 25 }, // 中
-      { satMax: 25, lumMin: 50,  lumMax: 240, iterations: 40 }, // 強
+      { satMax: 12, lumMin: 80,  lumMax: 252, iterations: 12 }, // 弱
+      { satMax: 18, lumMin: 70,  lumMax: 254, iterations: 25 }, // 中
+      { satMax: 25, lumMin: 50,  lumMax: 255, iterations: 40 }, // 強
     ][shadowStrength];
 
     const isShadowColor = (px) => {
@@ -545,6 +591,9 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       log(`[DBG] 影除去: ${totalRemoved}px 削除 (${(totalRemoved/N*100).toFixed(2)}%)`);
     }
 
+    // 穴埋め：マスクの中の閉じた穴（商品に囲まれた背景領域）を埋める
+    fillMaskHoles(work, W, H);
+
     // 最終マスクを反映
     for (let i = 0; i < N; i++){
       d[i * 4 + 3] = work[i];
@@ -553,7 +602,8 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     return;
   }
 
-  // 影除去オフ：マスクをそのまま適用
+  // 影除去オフ：マスクの穴埋めだけ実行
+  fillMaskHoles(mask, W, H);
   const imgData = ctx.getImageData(0, 0, W, H);
   const d = imgData.data;
   for (let i = 0; i < N; i++){
