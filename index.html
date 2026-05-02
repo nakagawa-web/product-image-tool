@@ -200,7 +200,7 @@
       <span class="val" id="marginVal">20px</span>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.3]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.4]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -248,7 +248,13 @@
   import { AutoModel, AutoProcessor, RawImage, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0';
   // Hugging Face Hub のモデルを使用（ローカルモデルは無効化）
   env.allowLocalModels = false;
-  if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.proxy = true;
+  // WASMバックエンドの明示設定
+  if (env.backends?.onnx?.wasm) {
+    env.backends.onnx.wasm.numThreads = 1;  // マルチスレッド無効化（SharedArrayBuffer不要にする）
+    env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0/dist/';
+    // proxyは使わない（trueにすると別Workerで動作しようとして失敗する）
+    env.backends.onnx.wasm.proxy = false;
+  }
   window._tjs = { AutoModel, AutoProcessor, RawImage, env };
   window.dispatchEvent(new Event('tjs-ready'));
 </script>
