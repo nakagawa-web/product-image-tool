@@ -200,7 +200,7 @@
       <span class="val" id="marginVal">20px</span>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.1]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.2]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -425,6 +425,21 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   const maskRaw = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(W, H);
   const maskData = maskRaw.data; // Uint8Array, 長さ = N
 
+  // ▼デバッグ: マスクの値分布を確認
+  let mn=255, mx=0, cnt0=0, cntMid=0, cnt255=0;
+  for (let i = 0; i < N; i++){
+    const v = maskData[i];
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    if (v === 0) cnt0++;
+    else if (v === 255) cnt255++;
+    else cntMid++;
+  }
+  if (typeof log === 'function') {
+    log(`[DBG] mask min=${mn} max=${mx} | =0: ${(cnt0/N*100).toFixed(1)}% / 中間: ${(cntMid/N*100).toFixed(1)}% / =255: ${(cnt255/N*100).toFixed(1)}%`);
+  }
+  // ▲デバッグここまで
+
   // ① マスク二値化（半透明問題対策）
   // マスク値128以上 → 255（不透明）、未満 → 0（透明）
   // フェザーは保持したいので、境界周辺だけは中間値を許容
@@ -467,9 +482,10 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       return sat <= params.satMax && lum >= params.lumMin && lum <= params.lumMax;
     };
 
-    // 反復的にマスクを内側に侵食。「背景or半透明」に隣接する「影色のピクセル」を削る
+    // 反復的にマスクを内側に侵食。「背景or半透明」に隣接する「影色のピクセルを削る
     // ポイント: フェザー領域も「背景側」として扱うため、判定は < 128
     const work = new Uint8Array(mask);
+    let totalRemoved = 0;
     for (let iter = 0; iter < params.iterations; iter++){
       const removed = [];
       for (let y = 1; y < H - 1; y++){
@@ -486,6 +502,10 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       }
       if (removed.length === 0) break;
       for (const px of removed) work[px] = 0;
+      totalRemoved += removed.length;
+    }
+    if (typeof log === 'function') {
+      log(`[DBG] 影除去: ${totalRemoved}px 削除 (${(totalRemoved/N*100).toFixed(2)}%)`);
     }
 
     // 最終マスクを反映
