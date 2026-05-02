@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.7]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.0]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（茶色・暖色は保護）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -512,6 +512,10 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       const minC = Math.min(r, g, b), maxC = Math.max(r, g, b);
       const sat = maxC - minC;
       const lum = (r + g + b) / 3;
+      // 茶色・暖色系（赤みが青より明確に強い）は影ではない → ダンボール・木材・茶ラベルを保護
+      if (r > b + 8) return false;
+      // 黄色寄り（緑が青より明確に強い）も除外 → 木目や生成り色を保護
+      if (g > b + 8 && r > b) return false;
       return sat <= params.satMax && lum >= params.lumMin && lum <= params.lumMax;
     };
 
@@ -726,25 +730,30 @@ function drawCoverFitOnSubject(ctx, img, S){
   ctx.drawImage(img, sx, sy, side, side, 0, 0, S, S);
 }
 
-// 最大連結成分（最も大きな塊）の bounding box でクロップ
-// 小さなノイズ点に引っ張られないため、ALPHA>=128 のピクセルを連結成分分析
+// 連結成分分析でクロップ
+// 戦略: 最大の塊を基準に、その面積の一定割合以上の成分を全て残す
+// → 単一商品（1つの塊）でもノイズに引っ張られず、
+//   複数商品（複数の塊）でも全部含まれる
 function autoCrop(src){
   const W = src.width, H = src.height;
   const ctx = src.getContext('2d');
   const d = ctx.getImageData(0, 0, W, H).data;
   const N = W * H;
   const ALPHA_THRESH = 128;
+  // 最大塊の0.5%以上、または200px以上の塊を採用
+  // → 大きな商品の小さな付属パーツ（細長い帯ラベル等）も拾える
+  // → 数pxレベルのノイズだけ捨てられる
+  const MIN_RATIO = 0.005;
+  const MIN_ABS_PX = 200;
 
-  // 各ピクセルが「商品」かどうか
   const isFg = new Uint8Array(N);
   for (let i = 0; i < N; i++){
     if (d[i * 4 + 3] >= ALPHA_THRESH) isFg[i] = 1;
   }
 
-  // BFSで連結成分を探索し、最大のものを記憶
+  // 全ての連結成分を列挙
   const visited = new Uint8Array(N);
-  let bestSize = 0;
-  let bestBox = null; // {x0, y0, x1, y1}
+  const components = []; // [{size, x0, y0, x1, y1}, ...]
   const queue = new Int32Array(N);
 
   for (let start = 0; start < N; start++){
@@ -763,38 +772,54 @@ function autoCrop(src){
       if (x > x1) x1 = x;
       if (y < y0) y0 = y;
       if (y > y1) y1 = y;
-      // 4近傍
       if (x > 0)     { const np = px - 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
       if (x < W - 1) { const np = px + 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
       if (y > 0)     { const np = px - W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
       if (y < H - 1) { const np = px + W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
     }
-
-    if (size > bestSize) {
-      bestSize = size;
-      bestBox = { x0, y0, x1, y1 };
-    }
+    components.push({ size, x0, y0, x1, y1 });
   }
 
-  // フォールバック：連結成分が見つからない場合は従来方式
-  if (!bestBox) {
+  // フォールバック：成分なし
+  if (components.length === 0) {
     let x0=W,y0=H,x1=0,y1=0;
     for(let y=0;y<H;y++) for(let x=0;x<W;x++){
       if(d[(y*W+x)*4+3]>10){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); }
     }
     if(x1<=x0||y1<=y0) return src;
-    bestBox = {x0, y0, x1, y1};
+    return cropTo(src, {x0, y0, x1, y1});
+  }
+
+  // 最大の塊のサイズ
+  let maxSize = 0;
+  for (const c of components) if (c.size > maxSize) maxSize = c.size;
+  const minSize = Math.min(maxSize * MIN_RATIO, MIN_ABS_PX);
+
+  // 採用する成分の bounding box を統合
+  let bx0 = W, by0 = H, bx1 = 0, by1 = 0;
+  let kept = 0;
+  for (const c of components) {
+    if (c.size < minSize) continue;
+    if (c.x0 < bx0) bx0 = c.x0;
+    if (c.y0 < by0) by0 = c.y0;
+    if (c.x1 > bx1) bx1 = c.x1;
+    if (c.y1 > by1) by1 = c.y1;
+    kept++;
   }
 
   if (typeof log === 'function') {
-    log(`[DBG] autoCrop: 最大塊=${bestSize}px, box=(${bestBox.x0},${bestBox.y0})-(${bestBox.x1},${bestBox.y1})`);
+    log(`[DBG] autoCrop: ${components.length}個の塊 → ${kept}個採用 (最大=${maxSize}px, box=${bx1-bx0+1}x${by1-by0+1})`);
   }
 
-  const w = bestBox.x1 - bestBox.x0 + 1;
-  const h = bestBox.y1 - bestBox.y0 + 1;
+  return cropTo(src, {x0: bx0, y0: by0, x1: bx1, y1: by1});
+}
+
+function cropTo(src, box){
+  const w = box.x1 - box.x0 + 1;
+  const h = box.y1 - box.y0 + 1;
   const out = document.createElement('canvas');
   out.width = w; out.height = h;
-  out.getContext('2d').drawImage(src, bestBox.x0, bestBox.y0, w, h, 0, 0, w, h);
+  out.getContext('2d').drawImage(src, box.x0, box.y0, w, h, 0, 0, w, h);
   return out;
 }
 
