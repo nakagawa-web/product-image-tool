@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>商品登録用画像 自動生成ツール</title>
+<style>
+  :root {
+    /* Fonts */
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+
+    /* Colors - backgrounds */
+    --color-background-primary:   #ffffff;
+    --color-background-secondary: #f7f6f3;
+    --color-background-tertiary:  #ebe9e3;
+    --color-background-success:   #ecf5ee;
+    --color-background-info:      #eaf2fa;
+
+    /* Colors - borders */
+    --color-border-tertiary:  #e6e4dd;
+    --color-border-secondary: #c8c5bb;
+    --color-border-success:   #b9d4c1;
+
+    /* Colors - text */
+    --color-text-primary:   #1a1a1a;
+    --color-text-secondary: #5d5b54;
+    --color-text-tertiary:  #8e8b82;
+    --color-text-success:   #1f6e3d;
+    --color-text-info:      #1f5fa8;
+    --color-text-warning:   #b97500;
+    --color-text-danger:    #c23829;
+
+    /* Radii */
+    --border-radius-md: 6px;
+    --border-radius-lg: 10px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    background: #faf9f6;
+    color: var(--color-text-primary);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 760px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+  .page-header { margin-bottom: 1.25rem; }
+  .page-header h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .page-header p { font-size: 13px; color: var(--color-text-secondary); margin: 0; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+  .app { padding: 0; font-family: var(--font-sans); }
+  .section { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1.25rem; margin-bottom: 1rem; }
+  .title { font-size: 15px; font-weight: 500; margin-bottom: 0.75rem; color: var(--color-text-primary); }
+  .lbl { font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; }
+  .drop-area { border: 1.5px dashed var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 1.25rem; text-align: center; cursor: pointer; transition: background 0.15s; background: var(--color-background-secondary); }
+  .drop-area:hover, .drop-area.over { background: var(--color-background-tertiary); }
+  .drop-area input { display: none; }
+  .drop-label { font-size: 13px; color: var(--color-text-secondary); margin-top: 6px; }
+  .file-badge { display: inline-flex; align-items: center; gap: 6px; border: 0.5px solid var(--color-border-success); border-radius: var(--border-radius-md); padding: 4px 10px; font-size: 12px; color: var(--color-text-success); background: var(--color-background-success); margin: 4px 2px; }
+  .row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .row label { font-size: 13px; color: var(--color-text-secondary); min-width: 160px; }
+  .row input[type=text], .row input[type=number], .row select {
+    font-family: inherit; font-size: 13px; padding: 6px 10px;
+    border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md);
+    background: var(--color-background-primary); color: var(--color-text-primary);
+  }
+  .row input[type=text]:focus, .row input[type=number]:focus, .row select:focus {
+    outline: none; border-color: var(--color-text-primary);
+  }
+  .row input[type=range] { flex: 1; }
+  .row .val { font-size: 13px; font-weight: 500; min-width: 36px; text-align: right; }
+  .divider { border: none; border-top: 0.5px solid var(--color-border-tertiary); margin: 12px 0; }
+  .col-preview { margin-top: 8px; }
+  .col-preview table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--font-mono); }
+  .col-preview td { padding: 4px 8px; border: 0.5px solid var(--color-border-tertiary); color: var(--color-text-secondary); }
+  .col-preview td.hl { background: var(--color-background-success); color: var(--color-text-success); font-weight: 500; }
+  .col-preview td.hdr { color: var(--color-text-tertiary); font-style: italic; }
+  .preview-name { font-size: 12px; color: var(--color-text-secondary); background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 8px 12px; margin-top: 8px; font-family: var(--font-mono); }
+  .preview-name strong { color: var(--color-text-primary); font-weight: 500; }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+  .tag-img  { background: var(--color-background-info);    color: var(--color-text-info); }
+  .tag-prod { background: var(--color-background-success); color: var(--color-text-success); }
+  .btn-run { width: 100%; padding: 0.75rem; font-size: 15px; font-weight: 500; border-radius: var(--border-radius-md); background: var(--color-text-primary); color: var(--color-background-primary); border: none; cursor: pointer; transition: opacity 0.15s; }
+  .btn-run:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-run:hover:not(:disabled) { opacity: 0.8; }
+  .progress-bar { height: 4px; background: var(--color-background-tertiary); border-radius: 2px; margin-top: 10px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: var(--color-text-primary); transition: width 0.2s; }
+  .log-area { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 0.75rem 1rem; font-size: 12px; font-family: var(--font-mono); color: var(--color-text-secondary); max-height: 200px; overflow-y: auto; min-height: 48px; }
+  .log-line { margin: 2px 0; }
+  .log-line.ok   { color: var(--color-text-success); }
+  .log-line.warn { color: var(--color-text-warning); }
+  .log-line.err  { color: var(--color-text-danger); }
+  .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 1rem; }
+  .result-card { border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-md); overflow: hidden; background: var(--color-background-secondary); }
+  .result-card img { width: 100%; display: block; }
+  .result-card .meta { padding: 8px 10px; font-size: 11px; color: var(--color-text-secondary); display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .result-card .meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl-btn { font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary); cursor: pointer; flex-shrink: 0; }
+  .dl-btn:hover { background: var(--color-background-secondary); }
+  .convert-note { font-size: 11px; color: var(--color-text-tertiary); margin-top: 4px; }
+  .btn-secondary { width: 100%; padding: 0.6rem; font-size: 14px; border-radius: var(--border-radius-md); background: var(--color-background-primary); color: var(--color-text-primary); border: 0.5px solid var(--color-border-secondary); cursor: pointer; }
+  .btn-secondary:hover { background: var(--color-background-secondary); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="page-header">
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span></h1>
+    <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
+  </header>
+
+  <h2 class="sr-only">商品登録用画像 自動生成ツール — ファイル名を半角小文字に統一して画像を自動生成</h2>
+
+<div class="app">
+
+  <!-- 1. メーカーコード -->
+  <div class="section">
+    <div class="title">1. メーカーコードを入力</div>
+    <div class="row" style="margin-bottom:4px;">
+      <label>メーカーコード</label>
+      <input type="text" id="makerCode" placeholder="例：ABC" style="flex:1;" oninput="updatePreview()">
+    </div>
+    <div class="convert-note">※ 全角・大文字は自動で半角小文字に変換されます</div>
+    <div class="preview-name">例）<strong id="prev1">abc-001_1.jpg</strong>　<strong id="prev2">abc-001_2.jpg</strong></div>
+  </div>
+
+  <!-- 2. 画像フォルダ -->
+  <div class="section">
+    <div class="title">2. 画像フォルダを選択</div>
+    <div class="drop-area" id="imgDrop"
+      onclick="document.getElementById('imgInput').click()"
+      ondragover="ev(event,'imgDrop',true)"
+      ondragleave="ev(event,'imgDrop',false)"
+      ondrop="dropFiles(event,'imgDrop',handleImages)">
+      <div style="font-size:22px;">🖼</div>
+      <div class="drop-label">クリックまたはドラッグ＆ドロップ（複数ファイル選択OK）</div>
+      <input type="file" id="imgInput" multiple accept="image/*" onchange="handleImages(this.files)">
+    </div>
+    <div id="imgBadges" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- 3. Excel + 列指定 -->
+  <div class="section">
+    <div class="title">3. 商品コードリスト（Excel / CSV）</div>
+    <div class="drop-area" id="xlsDrop"
+      onclick="document.getElementById('xlsInput').click()"
+      ondragover="ev(event,'xlsDrop',true)"
+      ondragleave="ev(event,'xlsDrop',false)"
+      ondrop="dropFiles(event,'xlsDrop',handleExcel)">
+      <div style="font-size:22px;">📄</div>
+      <div class="drop-label">クリックまたはドラッグ＆ドロップ（.xlsx / .csv）</div>
+      <input type="file" id="xlsInput" accept=".xlsx,.xls,.csv" onchange="handleExcel(this.files)">
+    </div>
+    <div id="xlsBadge" style="margin-top:8px;"></div>
+
+    <hr class="divider">
+    <div class="row" style="margin-bottom:6px;">
+      <label>商品コードの列</label>
+      <input type="text" id="colAlpha" value="A" maxlength="3" style="width:64px; text-transform:uppercase; font-family:var(--font-mono);" oninput="this.value=this.value.toUpperCase(); onColChange()">
+      <span style="font-size:12px; color:var(--color-text-tertiary);">アルファベットで指定（例：A、E、AB）</span>
+    </div>
+    <div class="row" style="margin-bottom:0;">
+      <label>1行目の扱い</label>
+      <select id="skipHeader" onchange="onColChange()">
+        <option value="1">ヘッダー行としてスキップ</option>
+        <option value="0">データとして読み込む</option>
+      </select>
+    </div>
+    <div id="colPreview" class="col-preview" style="display:none;"></div>
+  </div>
+
+  <!-- 4. 設定 -->
+  <div class="section">
+    <div class="title">4. 設定</div>
+    <div class="row">
+      <label>商品画像キーワード</label>
+      <input type="text" id="keyword" value="tan" style="width:120px;">
+    </div>
+    <div class="row">
+      <label>商品画像サイズ（右下合成）</label>
+      <input type="range" min="10" max="60" value="45" id="ratioSlider" oninput="document.getElementById('ratioVal').textContent=this.value+'%'">
+      <span class="val" id="ratioVal">45%</span>
+    </div>
+    <div class="row">
+      <label>背景除去 感度<br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI失敗時のフォールバック用</span></label>
+      <input type="range" min="5" max="80" value="30" id="bgThresh" oninput="document.getElementById('bgVal').textContent=this.value">
+      <span class="val" id="bgVal">30</span>
+    </div>
+    <div class="row">
+      <label>余白（px）</label>
+      <input type="range" min="0" max="60" value="20" id="marginSlider" oninput="document.getElementById('marginVal').textContent=this.value+'px'">
+      <span class="val" id="marginVal">20px</span>
+    </div>
+  </div>
+
+  <button class="btn-run" id="runBtn" onclick="runProcess()" disabled>画像を生成する</button>
+  <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
+
+  <div id="logSection" style="margin-top:1rem; display:none;">
+    <div class="lbl">処理ログ</div>
+    <div class="log-area" id="logArea"></div>
+  </div>
+
+  <div id="resultSection" style="margin-top:1rem; display:none;">
+    <div class="lbl" style="margin-bottom:8px;">生成結果</div>
+    <div class="results-grid" id="resultsGrid"></div>
+    <button class="btn-secondary" style="margin-top:1rem;" onclick="downloadAll()">すべてダウンロード（ZIP）</button>
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="module">
+  // transformers.js (Xenova/Hugging Face) を ESM で読み込み、windowに配置
+  import { AutoModel, AutoProcessor, RawImage, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0';
+  // Hugging Face Hub のモデルを使用（ローカルモデルは無効化）
+  env.allowLocalModels = false;
+  if (env.backends?.onnx?.wasm) env.backends.onnx.wasm.proxy = true;
+  window._tjs = { AutoModel, AutoProcessor, RawImage, env };
+  window.dispatchEvent(new Event('tjs-ready'));
+</script>
+<script>
+let allImages={}, productCodes=[], generatedFiles=[], rawRows=[];
+
+// 全角→半角＋小文字変換
+function toHalfLower(str){
+  return String(str||'')
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/　/g, ' ')
+    .replace(/[－ー―‐]/g, '-')
+    .toLowerCase()
+    .trim();
+}
+
+function alphaToIndex(a){
+  a=(a||'A').toUpperCase().trim();
+  let n=0;
+  for(let i=0;i<a.length;i++) n=n*26+(a.charCodeAt(i)-64);
+  return n-1;
+}
+
+function updatePreview(){
+  const raw=document.getElementById('makerCode').value.trim();
+  const m=toHalfLower(raw)||'abc';
+  document.getElementById('prev1').textContent=m+'-001_1.jpg';
+  document.getElementById('prev2').textContent=m+'-001_2.jpg';
+}
+
+function buildFileName(maker, code, num){
+  const m=toHalfLower(maker);
+  const c=toHalfLower(code);
+  return m ? `${m}-${c}_${num}.jpg` : `${c}_${num}.jpg`;
+}
+
+function onColChange(){
+  if(!rawRows.length) return;
+  const idx=alphaToIndex(document.getElementById('colAlpha').value);
+  const skip=parseInt(document.getElementById('skipHeader').value);
+  const dataRows=skip===1?rawRows.slice(1):rawRows;
+  productCodes=dataRows.map(r=>String(r[idx]||'').trim()).filter(Boolean);
+
+  const show=rawRows.slice(0,Math.min(6,rawRows.length));
+  const maxCols=Math.min(Math.max(idx+2,3),Math.max(...show.map(r=>r.length)));
+  let html='<table>';
+  show.forEach((row,ri)=>{
+    html+='<tr>';
+    for(let ci=0;ci<maxCols;ci++){
+      const isHL=ci===idx&&!(ri===0&&skip===1);
+      const isHdr=ri===0&&skip===1;
+      const val=String(row[ci]??'');
+      const disp=isHL?toHalfLower(val):val;
+      html+=`<td class="${isHL?'hl':''} ${isHdr?'hdr':''}">${disp}</td>`;
+    }
+    html+='</tr>';
+  });
+  html+='</table>';
+  const pv=document.getElementById('colPreview');
+  pv.innerHTML=`<div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:4px;">プレビュー — ${productCodes.length}件（変換後）</div>`+html;
+  pv.style.display='';
+  document.getElementById('xlsBadge').innerHTML=`<span class="file-badge">📋 ${productCodes.length}件 読み込み済</span>`;
+}
+
+function ev(e,id,on){ e.preventDefault(); document.getElementById(id).classList.toggle('over',on); }
+function dropFiles(e,id,handler){ e.preventDefault(); document.getElementById(id).classList.remove('over'); handler(e.dataTransfer.files); }
+
+function handleImages(files){
+  allImages={};
+  document.getElementById('imgBadges').innerHTML='';
+  const kw=document.getElementById('keyword').value||'tan';
+  Array.from(files).forEach(f=>{
+    if(!f.type.startsWith('image/')) return;
+    allImages[f.name]=f;
+    const isProd=f.name.includes(kw);
+    const b=document.createElement('span');
+    b.className='file-badge';
+    b.innerHTML=`<span class="tag ${isProd?'tag-prod':'tag-img'}">${isProd?'商品':'イメージ'}</span>${f.name}`;
+    document.getElementById('imgBadges').appendChild(b);
+  });
+  document.getElementById('runBtn').disabled=false;
+}
+
+function handleExcel(files){
+  if(!files.length) return;
+  const f=files[0];
+  const reader=new FileReader();
+  reader.onload=e=>{
+    rawRows=[];
+    if(f.name.toLowerCase().endsWith('.csv')){
+      new TextDecoder().decode(e.target.result).split(/\r?\n/).forEach(line=>{
+        if(line.trim()) rawRows.push(line.split(',').map(c=>c.trim()));
+      });
+    } else {
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      rawRows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1});
+    }
+    onColChange();
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+function log(msg,type=''){
+  const area=document.getElementById('logArea');
+  const d=document.createElement('div'); d.className='log-line '+type; d.textContent=msg;
+  area.appendChild(d); area.scrollTop=area.scrollHeight;
+}
+
+// ===== AI背景除去（RMBG-1.4） =====
+let _aiState = { ready: false, loading: false, model: null, processor: null, error: null };
+
+async function ensureAiReady(progressCb){
+  if (_aiState.ready) return true;
+  if (_aiState.loading) {
+    // 別の呼び出しが初期化中。完了を待つ
+    while (_aiState.loading) await new Promise(r => setTimeout(r, 200));
+    return _aiState.ready;
+  }
+  _aiState.loading = true;
+  try {
+    // transformers.js のロード完了を待つ
+    if (!window._tjs) {
+      await new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error('transformers.js のロードに失敗（ネット接続を確認）')), 30000);
+        window.addEventListener('tjs-ready', () => { clearTimeout(t); res(); }, { once: true });
+        if (window._tjs) { clearTimeout(t); res(); }
+      });
+    }
+    const { AutoModel, AutoProcessor } = window._tjs;
+    progressCb && progressCb('AIモデルをダウンロード中（初回のみ・約45MB）...');
+
+    _aiState.model = await AutoModel.from_pretrained('briaai/RMBG-1.4', {
+      config: { model_type: 'custom' },
+      progress_callback: (p) => {
+        if (p.status === 'progress' && p.progress != null) {
+          progressCb && progressCb(`AIモデル読込: ${Math.round(p.progress)}% (${p.file || ''})`);
+        }
+      }
+    });
+    _aiState.processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', {
+      config: {
+        do_normalize: true, do_pad: false, do_rescale: true, do_resize: true,
+        image_mean: [0.5, 0.5, 0.5],
+        feature_extractor_type: 'ImageFeatureExtractor',
+        image_std: [1, 1, 1],
+        resample: 2,
+        rescale_factor: 0.00392156862745098,
+        size: { width: 1024, height: 1024 },
+      }
+    });
+    _aiState.ready = true;
+    progressCb && progressCb('AIモデル準備完了');
+    return true;
+  } catch (e) {
+    _aiState.error = e;
+    console.error('AI init failed:', e);
+    return false;
+  } finally {
+    _aiState.loading = false;
+  }
+}
+
+// AIで背景除去：canvasのコンテキストにマスクを適用してアルファを書き戻す
+async function aiRemoveBg(ctx, canvas){
+  const { RawImage } = window._tjs;
+  // canvasから RawImage を作成
+  const image = await RawImage.fromCanvas(canvas);
+  // 前処理 → 推論
+  const { pixel_values } = await _aiState.processor(image);
+  const { output } = await _aiState.model({ input: pixel_values });
+  // 出力は [1,1,1024,1024] のマスクテンソル。元画像サイズへリサイズ
+  const maskRaw = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(canvas.width, canvas.height);
+  // マスクのピクセル列（grayscale）を取得
+  const maskData = maskRaw.data; // Uint8Array, 長さ = W*H（チャンネル1）
+  // 元画像のα に書き戻す
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  const N = canvas.width * canvas.height;
+  for (let i = 0; i < N; i++){
+    d[i * 4 + 3] = maskData[i];
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+// ===== 色ベースの背景除去（AIフォールバック用） =====
+// 第1段: 真っ白だけ flood-fill / 第2段: 影回収 / 第3段: 境界フェザー
+async function removeWhiteBg(ctx, canvas, threshold){
+  const W = canvas.width, H = canvas.height;
+  const imageData = ctx.getImageData(0, 0, W, H);
+  const d = imageData.data;
+  const N = W * H;
+
+  const T = threshold;
+  // 第1段：厳しい白判定（threshold=30 → whiteFloor=237）
+  const whiteFloor = 255 - Math.round(T * 0.6);
+  // 第2段：影判定（threshold=30 → shadowFloor=201、彩度差25以内）
+  const shadowFloor   = 255 - Math.round(T * 1.8);
+  const shadowSatMax  = 25;
+
+  const isWhiteStrict = (px) => {
+    const i = px * 4;
+    return d[i] >= whiteFloor && d[i+1] >= whiteFloor && d[i+2] >= whiteFloor;
+  };
+  const isShadowLike = (px) => {
+    const i = px * 4;
+    const r = d[i], g = d[i+1], b = d[i+2];
+    const minC = Math.min(r, g, b);
+    const maxC = Math.max(r, g, b);
+    return minC >= shadowFloor && (maxC - minC) <= shadowSatMax;
+  };
+
+  const bg = new Uint8Array(N);
+  const queue = [];
+
+  // 四辺シード
+  for (let x = 0; x < W; x++){
+    const top = x, bot = (H - 1) * W + x;
+    if (isWhiteStrict(top)) { bg[top] = 1; queue.push(top); }
+    if (isWhiteStrict(bot)) { bg[bot] = 1; queue.push(bot); }
+  }
+  for (let y = 1; y < H - 1; y++){
+    const left = y * W, right = y * W + W - 1;
+    if (isWhiteStrict(left))  { bg[left]  = 1; queue.push(left); }
+    if (isWhiteStrict(right)) { bg[right] = 1; queue.push(right); }
+  }
+
+  // 第1段：真っ白だけで flood-fill
+  let head = 0;
+  while (head < queue.length){
+    const px = queue[head++];
+    const x = px % W, y = (px - x) / W;
+    if (x > 0)     { const np = px - 1; if (!bg[np] && isWhiteStrict(np)) { bg[np] = 1; queue.push(np); } }
+    if (x < W - 1) { const np = px + 1; if (!bg[np] && isWhiteStrict(np)) { bg[np] = 1; queue.push(np); } }
+    if (y > 0)     { const np = px - W; if (!bg[np] && isWhiteStrict(np)) { bg[np] = 1; queue.push(np); } }
+    if (y < H - 1) { const np = px + W; if (!bg[np] && isWhiteStrict(np)) { bg[np] = 1; queue.push(np); } }
+  }
+
+  // 第2段：背景に隣接する影（無彩色で明るめのグレー）を追加除去
+  const queue2 = [];
+  for (let i = 0; i < N; i++) if (bg[i]) queue2.push(i);
+  let head2 = 0;
+  while (head2 < queue2.length){
+    const px = queue2[head2++];
+    const x = px % W, y = (px - x) / W;
+    if (x > 0)     { const np = px - 1; if (!bg[np] && isShadowLike(np)) { bg[np] = 1; queue2.push(np); } }
+    if (x < W - 1) { const np = px + 1; if (!bg[np] && isShadowLike(np)) { bg[np] = 1; queue2.push(np); } }
+    if (y > 0)     { const np = px - W; if (!bg[np] && isShadowLike(np)) { bg[np] = 1; queue2.push(np); } }
+    if (y < H - 1) { const np = px + W; if (!bg[np] && isShadowLike(np)) { bg[np] = 1; queue2.push(np); } }
+  }
+
+  // 第3段：マスク適用 + 境界フェザー
+  const F = 18; // フェザー幅（境界グラデーション）
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      const px = y * W + x;
+      const i = px * 4;
+      if (bg[px]) { d[i + 3] = 0; continue; }
+
+      let onEdge = false;
+      if (x > 0     && bg[px - 1]) onEdge = true;
+      else if (x < W - 1 && bg[px + 1]) onEdge = true;
+      else if (y > 0     && bg[px - W]) onEdge = true;
+      else if (y < H - 1 && bg[px + W]) onEdge = true;
+      if (!onEdge) continue;
+
+      // 境界が明るめなら徐々に透明化
+      const minCh = Math.min(d[i], d[i + 1], d[i + 2]);
+      if (minCh >= 255 - F) {
+        const a = 255 * (255 - minCh) / F;
+        d[i + 3] = Math.max(0, Math.min(255, Math.round(a)));
+      }
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function loadImg(file){
+  return new Promise((res,rej)=>{
+    const img=new Image(),url=URL.createObjectURL(file);
+    img.onload=()=>{ URL.revokeObjectURL(url); res(img); }; img.onerror=rej; img.src=url;
+  });
+}
+
+// 被写体の中心を推定（コントラスト勾配の重み付き重心）
+// 戻り値: 元画像座標系の {cx, cy}（0..width / 0..height）
+function detectSubjectCenter(img){
+  const SAMPLE = 128; // 縮小サイズ
+  const w = img.width, h = img.height;
+  const s = Math.min(SAMPLE / w, SAMPLE / h, 1);
+  const sw = Math.max(1, Math.round(w * s));
+  const sh = Math.max(1, Math.round(h * s));
+
+  const c = document.createElement('canvas');
+  c.width = sw; c.height = sh;
+  const cx = c.getContext('2d');
+  cx.drawImage(img, 0, 0, sw, sh);
+  const d = cx.getImageData(0, 0, sw, sh).data;
+
+  // グレースケール化
+  const gray = new Float32Array(sw * sh);
+  for (let i = 0, j = 0; j < gray.length; i += 4, j++){
+    gray[j] = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+  }
+
+  // Sobel風勾配（|dx| + |dy|）= 重要度
+  let sumW = 0, sumX = 0, sumY = 0;
+  for (let y = 1; y < sh - 1; y++){
+    for (let x = 1; x < sw - 1; x++){
+      const i = y * sw + x;
+      const gx =
+        -gray[i-sw-1] - 2*gray[i-1] - gray[i+sw-1] +
+         gray[i-sw+1] + 2*gray[i+1] + gray[i+sw+1];
+      const gy =
+        -gray[i-sw-1] - 2*gray[i-sw] - gray[i-sw+1] +
+         gray[i+sw-1] + 2*gray[i+sw] + gray[i+sw+1];
+      const mag = Math.abs(gx) + Math.abs(gy);
+      if (mag > 30) { // ノイズ閾値
+        sumW += mag;
+        sumX += mag * x;
+        sumY += mag * y;
+      }
+    }
+  }
+
+  // フォールバック：勾配が無さすぎる画像（単色など）は中心
+  if (sumW < 1) return { cx: w / 2, cy: h / 2 };
+
+  // 重心を元画像スケールに戻す
+  return {
+    cx: (sumX / sumW) / s,
+    cy: (sumY / sumW) / s
+  };
+}
+
+// 被写体中心を狙った cover-fit で正方形にクロップして描画
+function drawCoverFitOnSubject(ctx, img, S){
+  const { cx, cy } = detectSubjectCenter(img);
+  const w = img.width, h = img.height;
+
+  // ソース正方形の一辺（短辺に合わせる = cover-fit）
+  const side = Math.min(w, h);
+
+  // 被写体中心を切り抜き枠の中央に。ただし画像外にはみ出さないようクランプ
+  let sx = cx - side / 2;
+  let sy = cy - side / 2;
+  sx = Math.max(0, Math.min(sx, w - side));
+  sy = Math.max(0, Math.min(sy, h - side));
+
+  ctx.drawImage(img, sx, sy, side, side, 0, 0, S, S);
+}
+
+function autoCrop(src){
+  const ctx=src.getContext('2d'),d=ctx.getImageData(0,0,src.width,src.height).data;
+  let x0=src.width,y0=src.height,x1=0,y1=0;
+  for(let y=0;y<src.height;y++) for(let x=0;x<src.width;x++){
+    if(d[(y*src.width+x)*4+3]>10){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); }
+  }
+  if(x1<=x0||y1<=y0) return src;
+  const w=x1-x0+1,h=y1-y0+1,out=document.createElement('canvas');
+  out.width=w; out.height=h; out.getContext('2d').drawImage(src,x0,y0,w,h,0,0,w,h);
+  return out;
+}
+
+async function processOne(imgFile,prodFile){
+  const S=1200,ratio=parseInt(document.getElementById('ratioSlider').value)/100;
+  const thresh=parseInt(document.getElementById('bgThresh').value);
+  const margin=parseInt(document.getElementById('marginSlider').value);
+
+  const pi=await loadImg(prodFile);
+  const pc=document.createElement('canvas'); pc.width=pi.width; pc.height=pi.height;
+  const pctx=pc.getContext('2d'); pctx.drawImage(pi,0,0);
+
+  // AI優先、失敗したら色ベース処理にフォールバック
+  if (_aiState.ready) {
+    try { await aiRemoveBg(pctx, pc); }
+    catch(e){ console.warn('AI失敗、フォールバック:', e); await removeWhiteBg(pctx,pc,thresh); }
+  } else {
+    await removeWhiteBg(pctx,pc,thresh);
+  }
+
+  const crop=autoCrop(pc);
+  const results=[];
+
+  if(imgFile){
+    const bi=await loadImg(imgFile);
+    const c=document.createElement('canvas'); c.width=S; c.height=S;
+    const cx=c.getContext('2d');
+    cx.fillStyle='#fff'; cx.fillRect(0,0,S,S);
+    // 被写体中心を狙って cover-fit でクロップ
+    drawCoverFitOnSubject(cx, bi, S);
+    // 右下に商品画像を合成
+    const ms=Math.round(S*ratio);
+    let pw=crop.width,ph=crop.height;
+    if(pw>ms||ph>ms){ const s=Math.min(ms/pw,ms/ph); pw=Math.round(pw*s); ph=Math.round(ph*s); }
+    cx.drawImage(crop,0,0,crop.width,crop.height,S-pw-margin,S-ph-margin,pw,ph);
+    results.push({canvas:c,num:1});
+  }
+
+  const c2=document.createElement('canvas'); c2.width=S; c2.height=S;
+  const cx2=c2.getContext('2d');
+  cx2.fillStyle='#fff'; cx2.fillRect(0,0,S,S);
+  const ms2=S-margin*2;
+  let pw2=crop.width,ph2=crop.height;
+  if(pw2>ms2||ph2>ms2){ const s=Math.min(ms2/pw2,ms2/ph2); pw2=Math.round(pw2*s); ph2=Math.round(ph2*s); }
+  cx2.drawImage(crop,0,0,crop.width,crop.height,Math.round((S-pw2)/2),Math.round((S-ph2)/2),pw2,ph2);
+  results.push({canvas:c2,num:imgFile?2:1});
+  return results;
+}
+
+async function runProcess(){
+  const kw=document.getElementById('keyword').value||'tan';
+  const maker=document.getElementById('makerCode').value;
+  document.getElementById('logSection').style.display='';
+  document.getElementById('resultSection').style.display='none';
+  document.getElementById('logArea').innerHTML='';
+  document.getElementById('resultsGrid').innerHTML='';
+  generatedFiles=[];
+
+  const btn=document.getElementById('runBtn');
+  btn.disabled=true; btn.textContent='処理中...';
+
+  // AIモデル初期化（初回は数十秒かかる）
+  if (!_aiState.ready) {
+    log('AIモデルを準備しています（初回は数十秒、2回目以降は即時）...');
+    const ok = await ensureAiReady((msg) => log(msg));
+    if (ok) log('✓ AIモデル準備完了', 'ok');
+    else log('⚠ AIモデル使用不可。色ベースの背景除去で続行します', 'warn');
+  }
+
+  const imgF={},prodF={};
+  Object.entries(allImages).forEach(([n,f])=>{ if(n.includes(kw)) prodF[n]=f; else imgF[n]=f; });
+
+  onColChange();
+  const codes=productCodes.length>0?productCodes
+    :Object.keys(prodF).map(n=>n.replace(/\.[^.]+$/,'').replace(new RegExp(kw,'g'),'').replace(/[-_]+$/,''));
+
+  const total=codes.length; let done=0,ok=0,skip=0;
+  const fill=document.getElementById('progFill');
+
+  for(const code of codes){
+    const pf=Object.entries(prodF).find(([n])=>n.includes(code))?.[1];
+    if(!pf){ log(`スキップ: ${code} — 商品画像（${kw}）が見つかりません`,'warn'); skip++; done++; fill.style.width=Math.round(done/total*100)+'%'; continue; }
+    const mf=Object.entries(imgF).find(([n])=>n.includes(code))?.[1];
+    try{
+      const results=await processOne(mf||null,pf);
+      results.forEach(({canvas,num})=>{
+        const fname=buildFileName(maker,code,num);
+        canvas.toBlob(blob=>{ generatedFiles.push({name:fname,blob}); addCard(URL.createObjectURL(blob),fname); },'image/jpeg',0.95);
+      });
+      log(`✓ ${toHalfLower(code)} → ${buildFileName(maker,code,1)}${mf?' / '+buildFileName(maker,code,2):''}`,'ok');
+      ok++;
+    } catch(e){ log(`✗ ${code}: エラー (${e.message})`,'err'); skip++; }
+    done++; fill.style.width=Math.round(done/total*100)+'%';
+  }
+
+  log(`完了: 成功 ${ok} 件 / スキップ ${skip} 件`);
+  document.getElementById('resultSection').style.display='';
+  btn.disabled=false; btn.textContent='画像を生成する';
+}
+
+function addCard(url,fname){
+  const g=document.getElementById('resultsGrid');
+  const c=document.createElement('div'); c.className='result-card';
+  c.innerHTML=`<img src="${url}"><div class="meta"><span title="${fname}">${fname}</span><button class="dl-btn" onclick="dl('${url}','${fname}')">DL</button></div>`;
+  g.appendChild(c);
+}
+
+function dl(url,name){ const a=document.createElement('a'); a.href=url; a.download=name; a.click(); }
+
+async function downloadAll(){
+  if(!generatedFiles.length) return;
+  const zip=new JSZip();
+  generatedFiles.forEach(({name,blob})=>zip.file(name,blob));
+  dl(URL.createObjectURL(await zip.generateAsync({type:'blob'})),'商品画像_一括.zip');
+}
+</script>
+</body>
+</html>
