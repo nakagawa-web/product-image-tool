@@ -103,6 +103,10 @@
   .convert-note { font-size: 11px; color: var(--color-text-tertiary); margin-top: 4px; }
   .btn-secondary { width: 100%; padding: 0.6rem; font-size: 14px; border-radius: var(--border-radius-md); background: var(--color-background-primary); color: var(--color-text-primary); border: 0.5px solid var(--color-border-secondary); cursor: pointer; }
   .btn-secondary:hover { background: var(--color-background-secondary); }
+  .missing-area { background: #fff7ed; border: 0.5px solid #f0cf9d; border-radius: var(--border-radius-md); padding: 0.75rem 1rem; font-size: 13px; font-family: var(--font-mono); color: var(--color-text-warning); max-height: 240px; overflow-y: auto; }
+  .missing-row { padding: 3px 0; border-bottom: 0.5px solid #f0e2cc; }
+  .missing-row:last-child { border-bottom: none; }
+  .missing-row .reason { font-size: 11px; color: var(--color-text-tertiary); margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -195,6 +199,14 @@
       <input type="range" min="0" max="60" value="20" id="marginSlider" oninput="document.getElementById('marginVal').textContent=this.value+'px'">
       <span class="val" id="marginVal">20px</span>
     </div>
+    <div class="row">
+      <label>背景色（出力2）<br><span style="font-size:11px;color:var(--color-text-tertiary);">※デバッグ用：白以外で透明部分を確認</span></label>
+      <select id="bgMode" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
+        <option value="white">白（本番用）</option>
+        <option value="checker">チェッカー柄（透明部分が見える）</option>
+        <option value="gray">グレー（透明部分が見える）</option>
+      </select>
+    </div>
   </div>
 
   <button class="btn-run" id="runBtn" onclick="runProcess()" disabled>画像を生成する</button>
@@ -203,6 +215,12 @@
   <div id="logSection" style="margin-top:1rem; display:none;">
     <div class="lbl">処理ログ</div>
     <div class="log-area" id="logArea"></div>
+  </div>
+
+  <div id="missingSection" style="margin-top:1rem; display:none;">
+    <div class="lbl" style="margin-bottom:8px;">⚠ 画像がなかった商品コード（生成できませんでした）</div>
+    <div class="missing-area" id="missingArea"></div>
+    <button class="btn-secondary" style="margin-top:0.75rem;" onclick="copyMissingList()">リストをコピー</button>
   </div>
 
   <div id="resultSection" style="margin-top:1rem; display:none;">
@@ -590,6 +608,24 @@ async function processOne(imgFile,prodFile){
   const S=1200,ratio=parseInt(document.getElementById('ratioSlider').value)/100;
   const thresh=parseInt(document.getElementById('bgThresh').value);
   const margin=parseInt(document.getElementById('marginSlider').value);
+  const bgMode=document.getElementById('bgMode').value; // white / checker / gray
+
+  // キャンバスを背景色で塗る共通関数
+  const fillBg = (cx, w, h) => {
+    if (bgMode === 'gray') {
+      cx.fillStyle = '#888'; cx.fillRect(0, 0, w, h);
+    } else if (bgMode === 'checker') {
+      const sz = 20;
+      for (let y = 0; y < h; y += sz){
+        for (let x = 0; x < w; x += sz){
+          cx.fillStyle = ((x/sz + y/sz) % 2 === 0) ? '#cccccc' : '#999999';
+          cx.fillRect(x, y, sz, sz);
+        }
+      }
+    } else {
+      cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h);
+    }
+  };
 
   const pi=await loadImg(prodFile);
   const pc=document.createElement('canvas'); pc.width=pi.width; pc.height=pi.height;
@@ -610,7 +646,7 @@ async function processOne(imgFile,prodFile){
     const bi=await loadImg(imgFile);
     const c=document.createElement('canvas'); c.width=S; c.height=S;
     const cx=c.getContext('2d');
-    cx.fillStyle='#fff'; cx.fillRect(0,0,S,S);
+    fillBg(cx, S, S);
     // 被写体中心を狙って cover-fit でクロップ
     drawCoverFitOnSubject(cx, bi, S);
     // 右下に商品画像を合成
@@ -623,7 +659,7 @@ async function processOne(imgFile,prodFile){
 
   const c2=document.createElement('canvas'); c2.width=S; c2.height=S;
   const cx2=c2.getContext('2d');
-  cx2.fillStyle='#fff'; cx2.fillRect(0,0,S,S);
+  fillBg(cx2, S, S);
   const ms2=S-margin*2;
   let pw2=crop.width,ph2=crop.height;
   if(pw2>ms2||ph2>ms2){ const s=Math.min(ms2/pw2,ms2/ph2); pw2=Math.round(pw2*s); ph2=Math.round(ph2*s); }
@@ -637,6 +673,7 @@ async function runProcess(){
   const maker=document.getElementById('makerCode').value;
   document.getElementById('logSection').style.display='';
   document.getElementById('resultSection').style.display='none';
+  document.getElementById('missingSection').style.display='none';
   document.getElementById('logArea').innerHTML='';
   document.getElementById('resultsGrid').innerHTML='';
   generatedFiles=[];
@@ -660,11 +697,17 @@ async function runProcess(){
     :Object.keys(prodF).map(n=>n.replace(/\.[^.]+$/,'').replace(new RegExp(kw,'g'),'').replace(/[-_]+$/,''));
 
   const total=codes.length; let done=0,ok=0,skip=0;
+  const missing=[]; // {code, reason}
   const fill=document.getElementById('progFill');
 
   for(const code of codes){
     const pf=Object.entries(prodF).find(([n])=>n.includes(code))?.[1];
-    if(!pf){ log(`スキップ: ${code} — 商品画像（${kw}）が見つかりません`,'warn'); skip++; done++; fill.style.width=Math.round(done/total*100)+'%'; continue; }
+    if(!pf){
+      log(`スキップ: ${code} — 商品画像（${kw}）が見つかりません`,'warn');
+      missing.push({code: toHalfLower(code), reason: `商品画像（${kw}）なし`});
+      skip++; done++; fill.style.width=Math.round(done/total*100)+'%';
+      continue;
+    }
     const mf=Object.entries(imgF).find(([n])=>n.includes(code))?.[1];
     try{
       const results=await processOne(mf||null,pf);
@@ -674,13 +717,46 @@ async function runProcess(){
       });
       log(`✓ ${toHalfLower(code)} → ${buildFileName(maker,code,1)}${mf?' / '+buildFileName(maker,code,2):''}`,'ok');
       ok++;
-    } catch(e){ log(`✗ ${code}: エラー (${e.message})`,'err'); skip++; }
+    } catch(e){
+      log(`✗ ${code}: エラー (${e.message})`,'err');
+      missing.push({code: toHalfLower(code), reason: `エラー: ${e.message}`});
+      skip++;
+    }
     done++; fill.style.width=Math.round(done/total*100)+'%';
   }
 
   log(`完了: 成功 ${ok} 件 / スキップ ${skip} 件`);
+  showMissingList(missing);
   document.getElementById('resultSection').style.display='';
   btn.disabled=false; btn.textContent='画像を生成する';
+}
+
+// 未生成リストの表示
+let _missingList = [];
+function showMissingList(missing){
+  _missingList = missing;
+  const sec = document.getElementById('missingSection');
+  const area = document.getElementById('missingArea');
+  if (!missing.length) { sec.style.display = 'none'; return; }
+  area.innerHTML = '';
+  missing.forEach(({code, reason}) => {
+    const row = document.createElement('div');
+    row.className = 'missing-row';
+    row.innerHTML = `${code}<span class="reason">${reason}</span>`;
+    area.appendChild(row);
+  });
+  sec.style.display = '';
+}
+
+// 未生成リストのコピー
+function copyMissingList(){
+  if (!_missingList.length) return;
+  const text = _missingList.map(({code, reason}) => `${code}\t${reason}`).join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    log(`未生成リスト ${_missingList.length}件 をクリップボードにコピーしました`, 'ok');
+  }).catch(e => {
+    log(`コピー失敗: ${e.message}`, 'err');
+  });
 }
 
 function addCard(url,fname){
