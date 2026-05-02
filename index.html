@@ -200,7 +200,7 @@
       <span class="val" id="marginVal">20px</span>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.2]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.3]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -405,6 +405,8 @@ async function ensureAiReady(progressCb){
   } catch (e) {
     _aiState.error = e;
     console.error('AI init failed:', e);
+    progressCb && progressCb(`[AIエラー] ${e.message || e.toString()}`);
+    if (e.stack) progressCb && progressCb(`[AIスタック] ${e.stack.split('\n').slice(0, 3).join(' | ')}`);
     return false;
   } finally {
     _aiState.loading = false;
