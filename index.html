@@ -200,7 +200,14 @@
       <span class="val" id="marginVal">20px</span>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.4]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
+      <label>出力2の処理</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-primary);cursor:pointer;">
+        <input type="checkbox" id="cropOutput2" style="margin:0;">
+        商品も切り抜く（OFFで元画像をそのまま中央配置・高速）
+      </label>
+    </div>
+    <div class="row">
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v6.7]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去（処理ログでデバッグ可能）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -431,7 +438,24 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   const { pixel_values } = await _aiState.processor(image);
   const { output } = await _aiState.model({ input: pixel_values });
   const maskRaw = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(W, H);
-  const maskData = maskRaw.data; // Uint8Array, 長さ = N
+  const rawMask = maskRaw.data; // Uint8Array, 長さ = N
+
+  // ▼マスクを実際の値域に基づいて再正規化（mul(255)が不正確な場合の対策）
+  let rawMin = 255, rawMax = 0;
+  for (let i = 0; i < N; i++){
+    if (rawMask[i] < rawMin) rawMin = rawMask[i];
+    if (rawMask[i] > rawMax) rawMax = rawMask[i];
+  }
+  const maskData = new Uint8Array(N);
+  const range = rawMax - rawMin;
+  if (range > 0) {
+    for (let i = 0; i < N; i++){
+      maskData[i] = Math.round(((rawMask[i] - rawMin) / range) * 255);
+    }
+  } else {
+    maskData.set(rawMask);
+  }
+  // ▲再正規化ここまで
 
   // ▼デバッグ: マスクの値分布を確認
   let mn=255, mx=0, cnt0=0, cntMid=0, cnt255=0;
@@ -444,7 +468,8 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     else cntMid++;
   }
   if (typeof log === 'function') {
-    log(`[DBG] mask min=${mn} max=${mx} | =0: ${(cnt0/N*100).toFixed(1)}% / 中間: ${(cntMid/N*100).toFixed(1)}% / =255: ${(cnt255/N*100).toFixed(1)}%`);
+    log(`[DBG] raw mask range: ${rawMin}-${rawMax} → 正規化後 min=${mn} max=${mx}`);
+    log(`[DBG] mask | =0: ${(cnt0/N*100).toFixed(1)}% / 中間: ${(cntMid/N*100).toFixed(1)}% / =255: ${(cnt255/N*100).toFixed(1)}%`);
   }
   // ▲デバッグここまで
 
@@ -701,15 +726,75 @@ function drawCoverFitOnSubject(ctx, img, S){
   ctx.drawImage(img, sx, sy, side, side, 0, 0, S, S);
 }
 
+// 最大連結成分（最も大きな塊）の bounding box でクロップ
+// 小さなノイズ点に引っ張られないため、ALPHA>=128 のピクセルを連結成分分析
 function autoCrop(src){
-  const ctx=src.getContext('2d'),d=ctx.getImageData(0,0,src.width,src.height).data;
-  let x0=src.width,y0=src.height,x1=0,y1=0;
-  for(let y=0;y<src.height;y++) for(let x=0;x<src.width;x++){
-    if(d[(y*src.width+x)*4+3]>10){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); }
+  const W = src.width, H = src.height;
+  const ctx = src.getContext('2d');
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const N = W * H;
+  const ALPHA_THRESH = 128;
+
+  // 各ピクセルが「商品」かどうか
+  const isFg = new Uint8Array(N);
+  for (let i = 0; i < N; i++){
+    if (d[i * 4 + 3] >= ALPHA_THRESH) isFg[i] = 1;
   }
-  if(x1<=x0||y1<=y0) return src;
-  const w=x1-x0+1,h=y1-y0+1,out=document.createElement('canvas');
-  out.width=w; out.height=h; out.getContext('2d').drawImage(src,x0,y0,w,h,0,0,w,h);
+
+  // BFSで連結成分を探索し、最大のものを記憶
+  const visited = new Uint8Array(N);
+  let bestSize = 0;
+  let bestBox = null; // {x0, y0, x1, y1}
+  const queue = new Int32Array(N);
+
+  for (let start = 0; start < N; start++){
+    if (!isFg[start] || visited[start]) continue;
+    let head = 0, tail = 0;
+    queue[tail++] = start;
+    visited[start] = 1;
+    let size = 0;
+    let x0 = W, y0 = H, x1 = 0, y1 = 0;
+
+    while (head < tail){
+      const px = queue[head++];
+      size++;
+      const x = px % W, y = (px - x) / W;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      // 4近傍
+      if (x > 0)     { const np = px - 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+      if (x < W - 1) { const np = px + 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+      if (y > 0)     { const np = px - W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+      if (y < H - 1) { const np = px + W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+    }
+
+    if (size > bestSize) {
+      bestSize = size;
+      bestBox = { x0, y0, x1, y1 };
+    }
+  }
+
+  // フォールバック：連結成分が見つからない場合は従来方式
+  if (!bestBox) {
+    let x0=W,y0=H,x1=0,y1=0;
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+      if(d[(y*W+x)*4+3]>10){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); }
+    }
+    if(x1<=x0||y1<=y0) return src;
+    bestBox = {x0, y0, x1, y1};
+  }
+
+  if (typeof log === 'function') {
+    log(`[DBG] autoCrop: 最大塊=${bestSize}px, box=(${bestBox.x0},${bestBox.y0})-(${bestBox.x1},${bestBox.y1})`);
+  }
+
+  const w = bestBox.x1 - bestBox.x0 + 1;
+  const h = bestBox.y1 - bestBox.y0 + 1;
+  const out = document.createElement('canvas');
+  out.width = w; out.height = h;
+  out.getContext('2d').drawImage(src, bestBox.x0, bestBox.y0, w, h, 0, 0, w, h);
   return out;
 }
 
@@ -718,6 +803,7 @@ async function processOne(imgFile,prodFile){
   const thresh=parseInt(document.getElementById('bgThresh').value);
   const margin=parseInt(document.getElementById('marginSlider').value);
   const bgMode=document.getElementById('bgMode').value; // white / checker / gray
+  const cropOutput2=document.getElementById('cropOutput2').checked; // 出力2も切り抜くか
 
   // キャンバスを背景色で塗る共通関数
   const fillBg = (cx, w, h) => {
@@ -737,46 +823,64 @@ async function processOne(imgFile,prodFile){
   };
 
   const pi=await loadImg(prodFile);
-  const pc=document.createElement('canvas'); pc.width=pi.width; pc.height=pi.height;
-  const pctx=pc.getContext('2d'); pctx.drawImage(pi,0,0);
-
-  // AI優先、失敗したら色ベース処理にフォールバック
-  if (_aiState.ready) {
-    try {
-      const shadowStrength = parseInt(document.getElementById('shadowStrength').value);
-      await aiRemoveBg(pctx, pc, shadowStrength);
-    }
-    catch(e){ console.warn('AI失敗、フォールバック:', e); await removeWhiteBg(pctx,pc,thresh); }
-  } else {
-    await removeWhiteBg(pctx,pc,thresh);
-  }
-
-  const crop=autoCrop(pc);
   const results=[];
 
-  if(imgFile){
-    const bi=await loadImg(imgFile);
-    const c=document.createElement('canvas'); c.width=S; c.height=S;
-    const cx=c.getContext('2d');
-    fillBg(cx, S, S);
-    // 被写体中心を狙って cover-fit でクロップ
-    drawCoverFitOnSubject(cx, bi, S);
-    // 右下に商品画像を合成
-    const ms=Math.round(S*ratio);
-    let pw=crop.width,ph=crop.height;
-    if(pw>ms||ph>ms){ const s=Math.min(ms/pw,ms/ph); pw=Math.round(pw*s); ph=Math.round(ph*s); }
-    cx.drawImage(crop,0,0,crop.width,crop.height,S-pw-margin,S-ph-margin,pw,ph);
-    results.push({canvas:c,num:1});
+  // 出力1（イメージ合成）または「出力2も切り抜く」場合 → AI背景除去が必要
+  const needCrop = imgFile || cropOutput2;
+  let crop = null;
+
+  if (needCrop) {
+    const pc=document.createElement('canvas'); pc.width=pi.width; pc.height=pi.height;
+    const pctx=pc.getContext('2d'); pctx.drawImage(pi,0,0);
+
+    // AI優先、失敗したら色ベース処理にフォールバック
+    if (_aiState.ready) {
+      try {
+        const shadowStrength = parseInt(document.getElementById('shadowStrength').value);
+        await aiRemoveBg(pctx, pc, shadowStrength);
+      }
+      catch(e){ console.warn('AI失敗、フォールバック:', e); await removeWhiteBg(pctx,pc,thresh); }
+    } else {
+      await removeWhiteBg(pctx,pc,thresh);
+    }
+    crop = autoCrop(pc);
   }
 
-  const c2=document.createElement('canvas'); c2.width=S; c2.height=S;
-  const cx2=c2.getContext('2d');
+  // 出力1：イメージ画像 + 商品（右下に合成）
+  if (imgFile) {
+    const bi = await loadImg(imgFile);
+    const c = document.createElement('canvas'); c.width = S; c.height = S;
+    const cx = c.getContext('2d');
+    fillBg(cx, S, S);
+    drawCoverFitOnSubject(cx, bi, S);
+    const ms = Math.round(S * ratio);
+    let pw = crop.width, ph = crop.height;
+    if (pw > ms || ph > ms) { const s = Math.min(ms/pw, ms/ph); pw = Math.round(pw*s); ph = Math.round(ph*s); }
+    cx.drawImage(crop, 0, 0, crop.width, crop.height, S - pw - margin, S - ph - margin, pw, ph);
+    results.push({ canvas: c, num: 1 });
+  }
+
+  // 出力2：商品単体（中央配置）
+  const c2 = document.createElement('canvas'); c2.width = S; c2.height = S;
+  const cx2 = c2.getContext('2d');
   fillBg(cx2, S, S);
-  const ms2=S-margin*2;
-  let pw2=crop.width,ph2=crop.height;
-  if(pw2>ms2||ph2>ms2){ const s=Math.min(ms2/pw2,ms2/ph2); pw2=Math.round(pw2*s); ph2=Math.round(ph2*s); }
-  cx2.drawImage(crop,0,0,crop.width,crop.height,Math.round((S-pw2)/2),Math.round((S-ph2)/2),pw2,ph2);
-  results.push({canvas:c2,num:imgFile?2:1});
+
+  if (cropOutput2 && crop) {
+    // 切り抜いた商品を中央配置
+    const ms2 = S - margin * 2;
+    let pw2 = crop.width, ph2 = crop.height;
+    if (pw2 > ms2 || ph2 > ms2) { const s = Math.min(ms2/pw2, ms2/ph2); pw2 = Math.round(pw2*s); ph2 = Math.round(ph2*s); }
+    cx2.drawImage(crop, 0, 0, crop.width, crop.height, Math.round((S-pw2)/2), Math.round((S-ph2)/2), pw2, ph2);
+  } else {
+    // 元画像をそのまま contain-fit で中央配置（縦横比保持・全体が収まる）
+    const ms2 = S - margin * 2;
+    const s = Math.min(ms2 / pi.width, ms2 / pi.height);
+    const pw2 = Math.round(pi.width * s);
+    const ph2 = Math.round(pi.height * s);
+    cx2.drawImage(pi, 0, 0, pi.width, pi.height, Math.round((S-pw2)/2), Math.round((S-ph2)/2), pw2, ph2);
+  }
+
+  results.push({ canvas: c2, num: imgFile ? 2 : 1 });
   return results;
 }
 
