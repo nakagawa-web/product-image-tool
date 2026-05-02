@@ -200,6 +200,15 @@
       <span class="val" id="marginVal">20px</span>
     </div>
     <div class="row">
+      <label>影除去 強さ<br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影を追加除去</span></label>
+      <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
+        <option value="0">0：オフ（AI結果そのまま）</option>
+        <option value="1">1：弱</option>
+        <option value="2" selected>2：中（推奨）</option>
+        <option value="3">3：強</option>
+      </select>
+    </div>
+    <div class="row">
       <label>背景色（出力2）<br><span style="font-size:11px;color:var(--color-text-tertiary);">※デバッグ用：白以外で透明部分を確認</span></label>
       <select id="bgMode" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="white">白（本番用）</option>
@@ -403,23 +412,94 @@ async function ensureAiReady(progressCb){
 }
 
 // AIで背景除去：canvasのコンテキストにマスクを適用してアルファを書き戻す
-async function aiRemoveBg(ctx, canvas){
+// 追加処理: ① マスク二値化（半透明問題解消） ② 影除去（無彩色グレー領域を縮める）
+async function aiRemoveBg(ctx, canvas, shadowStrength){
   const { RawImage } = window._tjs;
-  // canvasから RawImage を作成
+  const W = canvas.width, H = canvas.height;
+  const N = W * H;
+
+  // 推論
   const image = await RawImage.fromCanvas(canvas);
-  // 前処理 → 推論
   const { pixel_values } = await _aiState.processor(image);
   const { output } = await _aiState.model({ input: pixel_values });
-  // 出力は [1,1,1024,1024] のマスクテンソル。元画像サイズへリサイズ
-  const maskRaw = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(canvas.width, canvas.height);
-  // マスクのピクセル列（grayscale）を取得
-  const maskData = maskRaw.data; // Uint8Array, 長さ = W*H（チャンネル1）
-  // 元画像のα に書き戻す
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d = imgData.data;
-  const N = canvas.width * canvas.height;
+  const maskRaw = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(W, H);
+  const maskData = maskRaw.data; // Uint8Array, 長さ = N
+
+  // ① マスク二値化（半透明問題対策）
+  // マスク値128以上 → 255（不透明）、未満 → 0（透明）
+  // フェザーは保持したいので、境界周辺だけは中間値を許容
+  const BINARY_THRESHOLD = 128;
+  const FEATHER_BAND = 30; // 境界の前後30の範囲はフェザー保持
+  const mask = new Uint8Array(N);
   for (let i = 0; i < N; i++){
-    d[i * 4 + 3] = maskData[i];
+    const v = maskData[i];
+    if (v >= BINARY_THRESHOLD + FEATHER_BAND) mask[i] = 255;
+    else if (v <= BINARY_THRESHOLD - FEATHER_BAND) mask[i] = 0;
+    else {
+      // 境界フェザー（線形補間でα付与）
+      mask[i] = Math.round(((v - (BINARY_THRESHOLD - FEATHER_BAND)) / (FEATHER_BAND * 2)) * 255);
+    }
+  }
+
+  // ② 影除去：マスクの境界（外側エッジ）から内側に向かって、
+  //    「無彩色（彩度低い）かつ暗め～中明度」のピクセルを段階的に除去
+  if (shadowStrength > 0) {
+    const imgData = ctx.getImageData(0, 0, W, H);
+    const d = imgData.data;
+
+    // 影判定（無彩色＋一定の明度範囲）
+    // strength 弱(1): 慎重 / 中(2): 普通 / 強(3): 積極的
+    const params = [
+      null,
+      { satMax: 30, lumMin: 60, lumMax: 200, iterations: 8  }, // 弱
+      { satMax: 40, lumMin: 50, lumMax: 215, iterations: 14 }, // 中
+      { satMax: 50, lumMin: 40, lumMax: 225, iterations: 20 }, // 強
+    ][shadowStrength];
+
+    const isShadowColor = (px) => {
+      const i = px * 4;
+      const r = d[i], g = d[i+1], b = d[i+2];
+      const minC = Math.min(r, g, b), maxC = Math.max(r, g, b);
+      const sat = maxC - minC; // 彩度近似
+      const lum = (r + g + b) / 3;
+      return sat <= params.satMax && lum >= params.lumMin && lum <= params.lumMax;
+    };
+
+    // 反復的に「マスク境界の外側に隣接する」影色ピクセルを削っていく
+    // ただし「マスクの外側=背景」から「マスクの内側=商品」に侵食して影候補を除去
+    const work = new Uint8Array(mask);
+    for (let iter = 0; iter < params.iterations; iter++){
+      const removed = [];
+      for (let y = 1; y < H - 1; y++){
+        for (let x = 1; x < W - 1; x++){
+          const px = y * W + x;
+          if (work[px] === 0) continue; // 既に背景
+          // 4近傍に背景（mask=0）があるか
+          const hasBgNeighbor =
+            work[px - 1] === 0 || work[px + 1] === 0 ||
+            work[px - W] === 0 || work[px + W] === 0;
+          if (!hasBgNeighbor) continue;
+          // 影色か判定
+          if (isShadowColor(px)) removed.push(px);
+        }
+      }
+      if (removed.length === 0) break; // 削るものがなくなった
+      for (const px of removed) work[px] = 0;
+    }
+
+    // 最終マスクを反映
+    for (let i = 0; i < N; i++){
+      d[i * 4 + 3] = work[i];
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return;
+  }
+
+  // 影除去オフ：マスクをそのまま適用
+  const imgData = ctx.getImageData(0, 0, W, H);
+  const d = imgData.data;
+  for (let i = 0; i < N; i++){
+    d[i * 4 + 3] = mask[i];
   }
   ctx.putImageData(imgData, 0, 0);
 }
@@ -633,7 +713,10 @@ async function processOne(imgFile,prodFile){
 
   // AI優先、失敗したら色ベース処理にフォールバック
   if (_aiState.ready) {
-    try { await aiRemoveBg(pctx, pc); }
+    try {
+      const shadowStrength = parseInt(document.getElementById('shadowStrength').value);
+      await aiRemoveBg(pctx, pc, shadowStrength);
+    }
     catch(e){ console.warn('AI失敗、フォールバック:', e); await removeWhiteBg(pctx,pc,thresh); }
   } else {
     await removeWhiteBg(pctx,pc,thresh);
