@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.0]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※純白は無条件に削る（茶色は引き続き保護）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.1]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※孤立した小塊（背景AI誤認識）を自動除去</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -522,6 +522,62 @@ function rectifyMaskIfBoxLike(mask, W, H){
   }
 }
 
+// 孤立した小さな塊を除去
+// 連結成分を分析し、最大塊の20%未満の塊は削除（AI誤認識による背景塊を排除）
+// ※ぽん酢のような付属品（最大の20%以上のサイズ）は守られる
+function removeIsolatedSmallBlobs(mask, W, H){
+  const N = W * H;
+  const MIN_RATIO = 0.20; // 最大塊の20%未満は除去
+  const ALPHA_THRESH = 128;
+
+  const isFg = new Uint8Array(N);
+  for (let i = 0; i < N; i++) isFg[i] = mask[i] >= ALPHA_THRESH ? 1 : 0;
+
+  // 連結成分を全て列挙
+  const visited = new Uint8Array(N);
+  const components = []; // 各成分のピクセル配列
+  const queue = new Int32Array(N);
+
+  for (let start = 0; start < N; start++){
+    if (!isFg[start] || visited[start]) continue;
+    let head = 0, tail = 0;
+    queue[tail++] = start;
+    visited[start] = 1;
+    const pixels = [];
+
+    while (head < tail){
+      const px = queue[head++];
+      pixels.push(px);
+      const x = px % W, y = (px - x) / W;
+      if (x > 0)     { const np = px - 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+      if (x < W - 1) { const np = px + 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+      if (y > 0)     { const np = px - W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+      if (y < H - 1) { const np = px + W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
+    }
+    components.push(pixels);
+  }
+
+  if (components.length <= 1) return; // 塊が1個以下なら削除する必要なし
+
+  // 最大塊のサイズ
+  let maxSize = 0;
+  for (const c of components) if (c.length > maxSize) maxSize = c.length;
+  const minSize = maxSize * MIN_RATIO;
+
+  // 最大塊の20%未満は削除
+  let removedBlobs = 0, removedPx = 0;
+  for (const pixels of components) {
+    if (pixels.length >= minSize) continue;
+    for (const px of pixels) mask[px] = 0;
+    removedBlobs++;
+    removedPx += pixels.length;
+  }
+
+  if (typeof log === 'function' && removedBlobs > 0) {
+    log(`[DBG] 孤立塊除去: ${removedBlobs}個 / ${removedPx}px (最大=${maxSize}px、閾値${(MIN_RATIO*100)}%)`);
+  }
+}
+
 // マスクの穴埋め
 // 「商品マスクの内側にある背景領域（前景に囲まれた閉領域）」を不透明にする
 // 画像端から到達できる背景はそのまま、到達できない背景＝穴として埋める
@@ -768,6 +824,9 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     // 穴埋め：マスクの中の閉じた穴（商品に囲まれた背景領域）を埋める
     fillMaskHoles(work, W, H);
 
+    // 孤立塊除去：本体から離れた小さな塊を削除（AI誤認識でマスクに混入したイメージ画像など）
+    removeIsolatedSmallBlobs(work, W, H);
+
     // 矩形化判定：商品が長方形に近い形なら bounding box 内を全部不透明に
     rectifyMaskIfBoxLike(work, W, H);
 
@@ -779,8 +838,9 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     return;
   }
 
-  // 影除去オフ：マスクの穴埋めと矩形化判定だけ実行
+  // 影除去オフ：マスクの穴埋めと孤立塊除去と矩形化判定だけ実行
   fillMaskHoles(mask, W, H);
+  removeIsolatedSmallBlobs(mask, W, H);
   rectifyMaskIfBoxLike(mask, W, H);
   const imgData = ctx.getImageData(0, 0, W, H);
   const d = imgData.data;
