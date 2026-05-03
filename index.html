@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.8]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI暴発検知付き（占有率50%超でフォールバック）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.0]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※純白は無条件に削る（茶色は引き続き保護）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -653,18 +653,23 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     }
   }
 
-  // ▼AI暴発検知: マスクが画像の50%以上を占めているか
-  // 商品単体撮影なら通常マスクは20-40%くらい。50%超は「画像全体を商品と誤認した」状態
-  let fgPx = 0;
-  for (let i = 0; i < N; i++) if (mask[i] >= 128) fgPx++;
-  const fgRatio = fgPx / N;
-  if (typeof log === 'function') {
-    log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}%`);
+  // ▼AI暴発検知: マスクが「広範囲かつ曖昧」な場合のみフォールバック
+  // 占有率だけでは「商品が大きく写る画像」を誤判定するため、
+  // 中間値（曖昧マスク）の比率も合わせて評価
+  let fgPx = 0, midPx = 0;
+  for (let i = 0; i < N; i++){
+    if (mask[i] >= 128) fgPx++;
+    if (mask[i] > 0 && mask[i] < 255) midPx++;
   }
-  if (fgRatio > 0.50) {
-    // AI失敗とみなし、切り抜きをキャンセル → 全領域を不透明（=元画像のまま）
+  const fgRatio = fgPx / N;
+  const midRatio = midPx / N;
+  if (typeof log === 'function') {
+    log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / 中間値率=${(midRatio*100).toFixed(1)}%`);
+  }
+  // 占有率50%超 かつ 中間値率20%超 → AIが画像全体を曖昧に判定 = 失敗
+  if (fgRatio > 0.50 && midRatio > 0.20) {
     if (typeof log === 'function') {
-      log(`[DBG] ⚠ AI失敗（占有率50%超）→ 切り抜きをキャンセルして元画像をそのまま使用`);
+      log(`[DBG] ⚠ AI失敗（広範囲＆曖昧）→ 切り抜きをキャンセルして元画像をそのまま使用`);
     }
     const imgData = ctx.getImageData(0, 0, W, H);
     const d = imgData.data;
@@ -697,6 +702,10 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       const minC = Math.min(r, g, b), maxC = Math.max(r, g, b);
       const sat = maxC - minC;
       const lum = (r + g + b) / 3;
+      // 「ほぼ純白」（彩度極低・高明度）は色相フィルタを通さず無条件で影/反射扱い
+      // → 撮影背景の白い反射を確実に削れるようにする
+      const isNearWhite = sat <= 8 && lum >= 230;
+      if (isNearWhite) return true;
       // 茶色・暖色系（赤みが青より明確に強い）は影ではない → ダンボール・木材・茶ラベルを保護
       if (r > b + 8) return false;
       // 黄色寄り（緑が青より明確に強い）も除外 → 木目や生成り色を保護
