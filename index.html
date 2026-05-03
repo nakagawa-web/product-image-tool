@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.2]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI処理後に影・反射を追加除去（穴埋め内蔵）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.5]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※箱型商品は自動で矩形化＋影除去＋穴埋め</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -426,6 +426,57 @@ async function ensureAiReady(progressCb){
   }
 }
 
+// 矩形化判定：商品マスクが長方形に近い形なら bounding box 内を全部不透明に塗りつぶす
+// → 箱型商品（白い箱、ダンボール、桐箱など）の縁を直線化
+// 判定: bounding box 内のマスク埋まり率が高ければ「箱」と見なす
+function rectifyMaskIfBoxLike(mask, W, H){
+  const N = W * H;
+  const RECT_THRESHOLD = 0.85; // 85%以上埋まっていれば矩形化
+
+  // bounding box を求める
+  let x0 = W, y0 = H, x1 = 0, y1 = 0;
+  let fgCount = 0;
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      if (mask[y * W + x] >= 128) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+        fgCount++;
+      }
+    }
+  }
+
+  if (fgCount === 0) return; // 商品なし
+
+  const bw = x1 - x0 + 1;
+  const bh = y1 - y0 + 1;
+  const bboxArea = bw * bh;
+  const fillRatio = fgCount / bboxArea;
+
+  if (typeof log === 'function') {
+    log(`[DBG] 矩形化判定: 埋まり率=${(fillRatio*100).toFixed(1)}% (閾値${RECT_THRESHOLD*100}%)`);
+  }
+
+  if (fillRatio < RECT_THRESHOLD) return; // 長方形でない → 何もしない
+
+  // 矩形化: bounding box 内のすべてのピクセルを不透明に
+  let added = 0;
+  for (let y = y0; y <= y1; y++){
+    for (let x = x0; x <= x1; x++){
+      const i = y * W + x;
+      if (mask[i] < 255) {
+        mask[i] = 255;
+        added++;
+      }
+    }
+  }
+  if (typeof log === 'function') {
+    log(`[DBG] 矩形化適用: ${added}px 追加で不透明化`);
+  }
+}
+
 // マスクの穴埋め
 // 「商品マスクの内側にある背景領域（前景に囲まれた閉領域）」を不透明にする
 // 画像端から到達できる背景はそのまま、到達できない背景＝穴として埋める
@@ -474,17 +525,39 @@ function fillMaskHoles(mask, W, H){
 
 // AIで背景除去：canvasのコンテキストにマスクを適用してアルファを書き戻す
 // 追加処理: ① マスク二値化（半透明問題解消） ② 影除去（無彩色グレー領域を縮める）
+//          ③ 商品が画像端に接している場合の対策で白余白を加えて推論
 async function aiRemoveBg(ctx, canvas, shadowStrength){
   const { RawImage } = window._tjs;
   const W = canvas.width, H = canvas.height;
   const N = W * H;
 
-  // 推論
-  const image = await RawImage.fromCanvas(canvas);
+  // ▼パディング: 画像の上下左右に白余白を追加してからAIに渡す
+  // 「商品が画像端に接している」場合、AIマスクの該当部分が画像端と繋がってしまい、
+  // 穴埋めロジックで埋まらない問題を回避する
+  const PAD = Math.round(Math.min(W, H) * 0.10); // 短辺の10%
+  const PW = W + PAD * 2, PH = H + PAD * 2;
+  const padCanvas = document.createElement('canvas');
+  padCanvas.width = PW; padCanvas.height = PH;
+  const padCtx = padCanvas.getContext('2d');
+  padCtx.fillStyle = '#fff';
+  padCtx.fillRect(0, 0, PW, PH);
+  padCtx.drawImage(canvas, PAD, PAD);
+  // ▲パディングここまで
+
+  // 推論（パディング済みの画像で）
+  const image = await RawImage.fromCanvas(padCanvas);
   const { pixel_values } = await _aiState.processor(image);
   const { output } = await _aiState.model({ input: pixel_values });
-  const maskRaw = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(W, H);
-  const rawMask = maskRaw.data; // Uint8Array, 長さ = N
+  const maskRaw = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(PW, PH);
+  const padRawMask = maskRaw.data; // パディング込みのマスク
+
+  // 元のサイズに切り出す
+  const rawMask = new Uint8Array(N);
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      rawMask[y * W + x] = padRawMask[(y + PAD) * PW + (x + PAD)];
+    }
+  }
 
   // ▼マスクを実際の値域に基づいて再正規化（mul(255)が不正確な場合の対策）
   let rawMin = 255, rawMax = 0;
@@ -565,16 +638,42 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       return sat <= params.satMax && lum >= params.lumMin && lum <= params.lumMax;
     };
 
-    // 反復的にマスクを内側に侵食。「背景or半透明」に隣接する「影色のピクセルを削る
-    // ポイント: フェザー領域も「背景側」として扱うため、判定は < 128
+    // 反復的にマスクを内側に侵食。「背景or半透明」に隣接する「影色」のピクセルを削る
+    // ポイント: 商品縁を守るため、マスクから一定距離内側は「安全地帯」として保護する
+    //         （= 商品から離れた反射のみ削り、商品の縁の白いラベルは守る）
     const work = new Uint8Array(mask);
+
+    // 安全地帯マップ作成: マスクの内側に SAFE_PX ピクセル以上ある領域
+    // 強さに応じて safe を変える: 弱=8px / 中=5px / 強=3px
+    const SAFE_PX = [0, 8, 5, 3][shadowStrength];
+    const isSafe = new Uint8Array(N);
+    if (SAFE_PX > 0) {
+      // 距離変換の代わりに反復的な縮小処理（軽量・効果は同等）
+      // safe[px]=1 はその時点で「マスク内」、0 は「マスク外」
+      for (let i = 0; i < N; i++) isSafe[i] = mask[i] >= 128 ? 1 : 0;
+      for (let s = 0; s < SAFE_PX; s++){
+        const tmp = new Uint8Array(isSafe);
+        for (let y = 1; y < H - 1; y++){
+          for (let x = 1; x < W - 1; x++){
+            const px = y * W + x;
+            if (!tmp[px]) continue;
+            // 4近傍に「マスク外」があったらマスク端 → 安全地帯ではない
+            if (!tmp[px-1] || !tmp[px+1] || !tmp[px-W] || !tmp[px+W]) {
+              isSafe[px] = 0;
+            }
+          }
+        }
+      }
+    }
+
     let totalRemoved = 0;
     for (let iter = 0; iter < params.iterations; iter++){
       const removed = [];
       for (let y = 1; y < H - 1; y++){
         for (let x = 1; x < W - 1; x++){
           const px = y * W + x;
-          if (work[px] < 128) continue; // 既に背景or半透明（侵食対象ではない）
+          if (work[px] < 128) continue; // 既に背景or半透明
+          if (isSafe[px]) continue;     // 安全地帯のピクセルは絶対に削らない
           // 4近傍に「背景寄り（< 128）」があるか
           const hasBgNeighbor =
             work[px - 1] < 128 || work[px + 1] < 128 ||
@@ -588,11 +687,14 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       totalRemoved += removed.length;
     }
     if (typeof log === 'function') {
-      log(`[DBG] 影除去: ${totalRemoved}px 削除 (${(totalRemoved/N*100).toFixed(2)}%)`);
+      log(`[DBG] 影除去: ${totalRemoved}px 削除 (${(totalRemoved/N*100).toFixed(2)}%, 安全地帯${SAFE_PX}px)`);
     }
 
     // 穴埋め：マスクの中の閉じた穴（商品に囲まれた背景領域）を埋める
     fillMaskHoles(work, W, H);
+
+    // 矩形化判定：商品が長方形に近い形なら bounding box 内を全部不透明に
+    rectifyMaskIfBoxLike(work, W, H);
 
     // 最終マスクを反映
     for (let i = 0; i < N; i++){
@@ -602,8 +704,9 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     return;
   }
 
-  // 影除去オフ：マスクの穴埋めだけ実行
+  // 影除去オフ：マスクの穴埋めと矩形化判定だけ実行
   fillMaskHoles(mask, W, H);
+  rectifyMaskIfBoxLike(mask, W, H);
   const imgData = ctx.getImageData(0, 0, W, H);
   const d = imgData.data;
   for (let i = 0; i < N; i++){
