@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.11]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI失敗時は色ベース白背景除去にフォールバック</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.13]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※検知条件中間値率60%超に引上げ・removeWhiteBg試行→塊数で破壊判定</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -1026,34 +1026,87 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   if (typeof log === 'function') {
     log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}%`);
   }
-  // [v8.10] 検知条件を強化：
-  //  ケースA: 占有率50%超 かつ AI中間値率20%超（旧条件、誤検出を残しつつ）
-  //  ケースB: =255（AIが確実に商品と判定）が 5% 未満 かつ 占有率 50% 超
-  //          → AIが「ここは確実」と言える領域がほぼ無いまま広く商品判定 = 完全失敗
-  const cnt255Ratio = cnt255 / N;
-  const aiFailedA = fgRatio > 0.50 && aiMidRatio > 0.20;
-  const aiFailedB = fgRatio > 0.50 && cnt255Ratio < 0.05;
-  if (aiFailedA || aiFailedB) {
+  // [v8.13] AI失敗時の処理：removeWhiteBg を試して、結果を「塊数」で評価する
+  //  ① まず removeWhiteBg を実行
+  //  ② 結果のマスクの連結成分（塊）を数える
+  //  ③ 塊数が少ない（≤50）→ 成功と判定 → そのまま採用
+  //     塊数が多い（>50）→ 破壊判定 → 元画像そのまま（v8.12 動作）に戻す
+  //
+  // 想定挙動:
+  //  - 76066/76065（白×白だが箱の輪郭明確）: AI中間値率34% → 検知発火しない → AI処理 ✅
+  //  - 76067（白×白で箱が分断されやすい）: AI中間値率71% → 検知発火 → removeWhiteBg → 塊多数 → 撤回 ✅
+  //  - 76033/76053（AI成功）: 中間値率低い → 検知発火しない ✅
+  //  - 76124/76135（AI完全失敗）: 中間値率94-100% → 検知発火 → removeWhiteBg / 撤回判定
+  //
+  // [v8.13] 検知条件を中間値率 > 20% → > 60% に引き上げ（誤発火大幅削減）
+  //   従来 20% で発火していた 76066 などが AI 経路に戻る → v8.7 までと同じ挙動を確認可能
+  const aiFailedA = fgRatio > 0.50 && aiMidRatio > 0.60;
+  if (aiFailedA) {
     if (typeof log === 'function') {
-      const reason = aiFailedB ? `=255率=${(cnt255Ratio*100).toFixed(1)}%（確信領域ほぼゼロ）` : '中間値率高すぎ';
-      log(`[WARN] AI失敗検知 → 色ベースの白背景除去（removeWhiteBg）にフォールバック（理由: ${reason}）`);
+      log(`[WARN] AI失敗検知 → removeWhiteBg を試行（占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}%）`);
     }
-    // [v8.11] AI失敗時は removeWhiteBg にフォールバック
-    // 76124（赤箱+白背景）のような明確な背景色を持つ画像はこれで救える
-    // 76135（暗背景）は removeWhiteBg では消えないので、結果的に元画像のまま使われる
-    //  → 後段の autoCrop で「画像全体」が1個の塊として採用 → 均一余白で配置（許容範囲）
+    // removeWhiteBg を試す前に、現在の画像状態を保存（撤回用）
+    const backupImgData = ctx.getImageData(0, 0, W, H);
+
     const threshEl = document.getElementById('bgThresh');
     const fbThresh = threshEl ? parseInt(threshEl.value) || 30 : 30;
+    let fallbackOK = false;
     try {
       await removeWhiteBg(ctx, canvas, fbThresh);
-      if (typeof log === 'function') log(`[DBG] removeWhiteBg(threshold=${fbThresh}) 完了`);
+
+      // 結果を評価：塊数を数える（簡易版・4近傍 BFS）
+      const resultData = ctx.getImageData(0, 0, W, H).data;
+      const visited = new Uint8Array(N);
+      let blobCount = 0;
+      const queue = new Int32Array(N);
+      const ALPHA_THRESH = 128;
+      const MIN_BLOB_SIZE = 50; // 50px未満の極小塊は数えない（ノイズ）
+      for (let i = 0; i < N; i++){
+        if (visited[i]) continue;
+        if (resultData[i * 4 + 3] < ALPHA_THRESH){ visited[i] = 1; continue; }
+        // BFS
+        let head = 0, tail = 0;
+        queue[tail++] = i;
+        visited[i] = 1;
+        let size = 0;
+        while (head < tail){
+          const j = queue[head++];
+          size++;
+          const x = j % W, y = (j / W) | 0;
+          const nbrs = [];
+          if (x > 0)     nbrs.push(j - 1);
+          if (x < W - 1) nbrs.push(j + 1);
+          if (y > 0)     nbrs.push(j - W);
+          if (y < H - 1) nbrs.push(j + W);
+          for (const k of nbrs){
+            if (!visited[k] && resultData[k * 4 + 3] >= ALPHA_THRESH){
+              visited[k] = 1;
+              queue[tail++] = k;
+            }
+          }
+        }
+        if (size >= MIN_BLOB_SIZE) blobCount++;
+        if (blobCount > 100) break; // 早期打ち切り（破壊確定）
+      }
+      const BLOB_LIMIT = 50;
+      if (blobCount <= BLOB_LIMIT){
+        fallbackOK = true;
+        if (typeof log === 'function') log(`[DBG] removeWhiteBg 成功と判定（塊数=${blobCount} ≤ ${BLOB_LIMIT}）→ そのまま採用`);
+      } else {
+        if (typeof log === 'function') log(`[DBG] ⚠ removeWhiteBg 破壊判定（塊数=${blobCount} > ${BLOB_LIMIT}）→ 撤回して元画像そのまま`);
+      }
     } catch (e) {
-      console.warn('[v8.11] removeWhiteBg fallback failed:', e);
-      // 二重失敗：全画素 α=255（最終手段）
-      const imgData = ctx.getImageData(0, 0, W, H);
-      const d = imgData.data;
-      for (let i = 0; i < N; i++) d[i * 4 + 3] = 255;
-      ctx.putImageData(imgData, 0, 0);
+      console.warn('[v8.13] removeWhiteBg failed:', e);
+      if (typeof log === 'function') log(`[DBG] removeWhiteBg がエラー → 元画像そのまま`);
+    }
+
+    if (!fallbackOK){
+      // 撤回：元画像をそのまま使う（全画素 α=255）
+      ctx.putImageData(backupImgData, 0, 0);
+      const imgData2 = ctx.getImageData(0, 0, W, H);
+      const d2 = imgData2.data;
+      for (let i = 0; i < N; i++) d2[i * 4 + 3] = 255;
+      ctx.putImageData(imgData2, 0, 0);
     }
     return;
   }
