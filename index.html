@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.10]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI失敗検知強化／触手・弱フェザー・離れ塊・端ノイズを段階的に除去</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.11]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI失敗時は色ベース白背景除去にフォールバック</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -1036,12 +1036,25 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   if (aiFailedA || aiFailedB) {
     if (typeof log === 'function') {
       const reason = aiFailedB ? `=255率=${(cnt255Ratio*100).toFixed(1)}%（確信領域ほぼゼロ）` : '中間値率高すぎ';
-      log(`[WARN] AI失敗検知 → 元画像をそのまま使用（理由: ${reason}）`);
+      log(`[WARN] AI失敗検知 → 色ベースの白背景除去（removeWhiteBg）にフォールバック（理由: ${reason}）`);
     }
-    const imgData = ctx.getImageData(0, 0, W, H);
-    const d = imgData.data;
-    for (let i = 0; i < N; i++) d[i * 4 + 3] = 255;
-    ctx.putImageData(imgData, 0, 0);
+    // [v8.11] AI失敗時は removeWhiteBg にフォールバック
+    // 76124（赤箱+白背景）のような明確な背景色を持つ画像はこれで救える
+    // 76135（暗背景）は removeWhiteBg では消えないので、結果的に元画像のまま使われる
+    //  → 後段の autoCrop で「画像全体」が1個の塊として採用 → 均一余白で配置（許容範囲）
+    const threshEl = document.getElementById('bgThresh');
+    const fbThresh = threshEl ? parseInt(threshEl.value) || 30 : 30;
+    try {
+      await removeWhiteBg(ctx, canvas, fbThresh);
+      if (typeof log === 'function') log(`[DBG] removeWhiteBg(threshold=${fbThresh}) 完了`);
+    } catch (e) {
+      console.warn('[v8.11] removeWhiteBg fallback failed:', e);
+      // 二重失敗：全画素 α=255（最終手段）
+      const imgData = ctx.getImageData(0, 0, W, H);
+      const d = imgData.data;
+      for (let i = 0; i < N; i++) d[i * 4 + 3] = 255;
+      ctx.putImageData(imgData, 0, 0);
+    }
     return;
   }
   // ▲AI暴発検知ここまで
