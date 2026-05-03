@@ -113,7 +113,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.16-1</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -1732,6 +1732,9 @@ async function runProcess(){
   document.getElementById('logArea').innerHTML='';
   document.getElementById('resultsGrid').innerHTML='';
   generatedFiles=[];
+
+  // バージョン表示（リロード確認用）
+  log(`▶ ツール版: ${document.getElementById('versionBadge').textContent}`);
 
   const btn=document.getElementById('runBtn');
   btn.disabled=true; btn.textContent='処理中...';
