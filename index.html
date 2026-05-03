@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.1]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※孤立した小塊（背景AI誤認識）を自動除去</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.2]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※本体から離れた塊を距離ベースで除去</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -522,20 +522,23 @@ function rectifyMaskIfBoxLike(mask, W, H){
   }
 }
 
-// 孤立した小さな塊を除去
-// 連結成分を分析し、最大塊の20%未満の塊は削除（AI誤認識による背景塊を排除）
-// ※ぽん酢のような付属品（最大の20%以上のサイズ）は守られる
+// 孤立塊の除去
+// 最大塊を「本体」とみなし、それから一定距離以上離れた塊を削除する
+// （AI誤認識でマスクに混入したイメージ画像の塊・背景の塊を排除）
+// 近くにある付属品（ぽん酢パックなど）は距離が近いので守られる
+// また、極端に小さい塊（ノイズ）はサイズで除外
 function removeIsolatedSmallBlobs(mask, W, H){
   const N = W * H;
-  const MIN_RATIO = 0.20; // 最大塊の20%未満は除去
+  const SIZE_THRESHOLD_RATIO = 0.005; // 最大塊の0.5%未満は無条件で削除（ノイズ）
+  const DISTANCE_RATIO = 0.6;         // 本体の対角の60%以上離れた塊は削除
   const ALPHA_THRESH = 128;
 
   const isFg = new Uint8Array(N);
   for (let i = 0; i < N; i++) isFg[i] = mask[i] >= ALPHA_THRESH ? 1 : 0;
 
-  // 連結成分を全て列挙
+  // 全連結成分を列挙、各成分のサイズと中心と bbox を計算
   const visited = new Uint8Array(N);
-  const components = []; // 各成分のピクセル配列
+  const components = [];
   const queue = new Int32Array(N);
 
   for (let start = 0; start < N; start++){
@@ -543,38 +546,76 @@ function removeIsolatedSmallBlobs(mask, W, H){
     let head = 0, tail = 0;
     queue[tail++] = start;
     visited[start] = 1;
+    let size = 0;
+    let sumX = 0, sumY = 0;
+    let x0 = W, y0 = H, x1 = 0, y1 = 0;
     const pixels = [];
 
     while (head < tail){
       const px = queue[head++];
       pixels.push(px);
+      size++;
       const x = px % W, y = (px - x) / W;
+      sumX += x; sumY += y;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
       if (x > 0)     { const np = px - 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
       if (x < W - 1) { const np = px + 1; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
       if (y > 0)     { const np = px - W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
       if (y < H - 1) { const np = px + W; if (isFg[np] && !visited[np]) { visited[np] = 1; queue[tail++] = np; } }
     }
-    components.push(pixels);
+    components.push({
+      pixels,
+      size,
+      cx: sumX / size,
+      cy: sumY / size,
+      x0, y0, x1, y1
+    });
   }
 
-  if (components.length <= 1) return; // 塊が1個以下なら削除する必要なし
+  if (components.length <= 1) return;
 
-  // 最大塊のサイズ
-  let maxSize = 0;
-  for (const c of components) if (c.length > maxSize) maxSize = c.length;
-  const minSize = maxSize * MIN_RATIO;
+  // 最大塊（=本体）を特定
+  let bodyIdx = 0;
+  for (let i = 1; i < components.length; i++){
+    if (components[i].size > components[bodyIdx].size) bodyIdx = i;
+  }
+  const body = components[bodyIdx];
+  const bodyW = body.x1 - body.x0 + 1;
+  const bodyH = body.y1 - body.y0 + 1;
+  const bodyDiag = Math.sqrt(bodyW * bodyW + bodyH * bodyH);
+  const distLimit = bodyDiag * DISTANCE_RATIO;
+  const minSize = body.size * SIZE_THRESHOLD_RATIO;
 
-  // 最大塊の20%未満は削除
+  // 本体以外の塊を判定して削除
   let removedBlobs = 0, removedPx = 0;
-  for (const pixels of components) {
-    if (pixels.length >= minSize) continue;
-    for (const px of pixels) mask[px] = 0;
-    removedBlobs++;
-    removedPx += pixels.length;
+  for (let i = 0; i < components.length; i++){
+    if (i === bodyIdx) continue;
+    const c = components[i];
+
+    // サイズが小さすぎ → 削除（ノイズ）
+    if (c.size < minSize) {
+      for (const px of c.pixels) mask[px] = 0;
+      removedBlobs++;
+      removedPx += c.size;
+      continue;
+    }
+
+    // 本体の中心からの距離（中心 vs 中心）が遠すぎ → 削除
+    const dx = c.cx - body.cx;
+    const dy = c.cy - body.cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > distLimit) {
+      for (const px of c.pixels) mask[px] = 0;
+      removedBlobs++;
+      removedPx += c.size;
+    }
   }
 
   if (typeof log === 'function' && removedBlobs > 0) {
-    log(`[DBG] 孤立塊除去: ${removedBlobs}個 / ${removedPx}px (最大=${maxSize}px、閾値${(MIN_RATIO*100)}%)`);
+    log(`[DBG] 孤立塊除去: ${removedBlobs}個 / ${removedPx}px (本体=${body.size}px、距離閾値=${distLimit.toFixed(0)}px)`);
   }
 }
 
