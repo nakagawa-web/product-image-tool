@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.4]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※触手・弱フェザー・離れ塊を段階的に除去</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.5]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※触手・弱フェザー・離れ塊・画像端ノイズを段階的に除去</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -642,7 +642,7 @@ function removeIsolatedSmallBlobs(mask, W, H){
   const N = W * H;
   const SIZE_THRESHOLD_RATIO = 0.005; // 最大塊の0.5%未満は無条件で削除（ノイズ）
   const PROTECT_SIZE_RATIO   = 0.05;  // [v8.4] 本体の5%以上は距離無視で保護（複数商品レイアウト対策強化）
-  const DISTANCE_RATIO       = 0.40;  // [v8.3] 辺-辺距離が本体対角の40%超なら削除（中心距離0.6 相当）
+  const DISTANCE_RATIO       = 0.25;  // [v8.5] 辺-辺距離が本体対角の25%超なら削除（40%→25%に厳格化）
   const ALPHA_THRESH = 128;
 
   const isFg = new Uint8Array(N);
@@ -703,6 +703,7 @@ function removeIsolatedSmallBlobs(mask, W, H){
 
   // 本体以外の塊を判定して削除
   let removedBlobs = 0, removedPx = 0;
+  let edgeRemoved = 0; // [v8.5] 画像端接触で削除した数
   for (let i = 0; i < components.length; i++){
     if (i === bodyIdx) continue;
     const c = components[i];
@@ -712,6 +713,19 @@ function removeIsolatedSmallBlobs(mask, W, H){
       for (const px of c.pixels) mask[px] = 0;
       removedBlobs++;
       removedPx += c.size;
+      continue;
+    }
+
+    // [v8.5] 画像端に接する小塊を無条件削除
+    // 切り抜き残りの多くはイメージ画像（料理写真）の縁由来で画像端に接していることが多い。
+    // 商品本体は通常画像中央付近にあるため、画像端接触の小塊は信頼性が低い。
+    // ただし保護閾値（5%）以上のサイズは「商品の一部」の可能性があるので保護。
+    const touchesEdge = (c.x0 === 0 || c.y0 === 0 || c.x1 === W - 1 || c.y1 === H - 1);
+    if (touchesEdge && c.size < body.size * PROTECT_SIZE_RATIO) {
+      for (const px of c.pixels) mask[px] = 0;
+      removedBlobs++;
+      removedPx += c.size;
+      edgeRemoved++;
       continue;
     }
 
@@ -732,7 +746,7 @@ function removeIsolatedSmallBlobs(mask, W, H){
   }
 
   if (typeof log === 'function' && removedBlobs > 0) {
-    log(`[DBG] 孤立塊除去: ${removedBlobs}個 / ${removedPx}px (本体=${body.size}px、辺距離閾値=${distLimit.toFixed(0)}px、保護閾値=${(PROTECT_SIZE_RATIO*100)}%)`);
+    log(`[DBG] 孤立塊除去: ${removedBlobs}個 / ${removedPx}px (本体=${body.size}px、辺距離閾値=${distLimit.toFixed(0)}px、保護=${(PROTECT_SIZE_RATIO*100)}%、画像端接触=${edgeRemoved}個)`);
   }
 }
 
