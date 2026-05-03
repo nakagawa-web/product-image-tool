@@ -207,18 +207,18 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.14]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※塊数閾値50→200に拡大（76013のような複数商品画像対策）</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.15]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI失敗時：removeWhiteBg→破壊なら「彩度+暗さ矩形クロップ」（白×白対策）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
-        <option value="1">1：弱</option>
-        <option value="2" selected>2：中（推奨）</option>
+        <option value="1" selected>1：弱（推奨）</option>
+        <option value="2">2：中</option>
         <option value="3">3：強</option>
       </select>
     </div>
     <div class="row">
       <label>縁の影削り（px） <span style="color:#c23829;font-weight:600;">[v8.7]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※商品の縁から広がる影/フェザーをマスク収縮で削る。影除去設定と独立して動作。</span></label>
-      <input type="range" min="0" max="10" value="2" id="erodeSlider" oninput="document.getElementById('erodeVal').textContent=this.value+'px'">
-      <span class="val" id="erodeVal">2px</span>
+      <input type="range" min="0" max="10" value="1" id="erodeSlider" oninput="document.getElementById('erodeVal').textContent=this.value+'px'">
+      <span class="val" id="erodeVal">1px</span>
     </div>
     <div class="row">
       <label>縁ホワイトキル（px） <span style="color:#c23829;font-weight:600;">[v8.9]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※マスク境界からN px内側だけ「白〜薄グレーのピクセル」を背景化。商品の中央は安全。白背景商品の影残り対策。</span></label>
@@ -927,6 +927,82 @@ function fillMaskHoles(mask, W, H){
   }
 }
 
+// [v8.16] 白背景検知：四辺ピクセルの95%以上が「白に近い」なら true
+// 用途: 白背景の白い箱・白い緩衝材など、AI が背景と区別できない B群対策の前段判定
+function detectWhiteBackground(d, W, H){
+  const isWhitePx = (i) => {
+    const r = d[i], g = d[i+1], b = d[i+2];
+    const minC = Math.min(r,g,b), maxC = Math.max(r,g,b);
+    return minC >= 235 && (maxC - minC) <= 15;
+  };
+  let total = 0, white = 0;
+  for (let x = 0; x < W; x++){
+    if (isWhitePx(x * 4)) white++; total++;
+    if (isWhitePx(((H-1) * W + x) * 4)) white++; total++;
+  }
+  for (let y = 1; y < H - 1; y++){
+    if (isWhitePx((y * W) * 4)) white++; total++;
+    if (isWhitePx((y * W + W - 1) * 4)) white++; total++;
+  }
+  return total > 0 ? (white / total) >= 0.95 : false;
+}
+
+// [v8.16] 有彩色＋暗ピクセル bbox 矩形クロップ（B群対策）
+// 「彩度+暗さ矩形クロップ」の処理を関数化。マージンは引数で指定。
+// ctx: 操作対象キャンバスコンテキスト / W,H: サイズ
+// satMin: 彩度しきい値（これ以上で商品候補） / valMax: 明度しきい値（これ以下で商品候補。0で無効）
+// marginPx: bbox を何px拡張するか
+// 戻り値: true=成功, false=候補px不足で失敗（α=255のまま）
+function chromaticRectCrop(ctx, W, H, satMin, valMax, marginPx){
+  const N = W * H;
+  const imgData = ctx.getImageData(0, 0, W, H);
+  const d = imgData.data;
+  let bx0 = W, by0 = H, bx1 = -1, by1 = -1;
+  let candidateCount = 0;
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      const i = (y * W + x) * 4;
+      const r = d[i], g = d[i+1], b = d[i+2];
+      const sat = Math.max(r,g,b) - Math.min(r,g,b);
+      const val = Math.min(r,g,b);
+      if (sat >= satMin || (valMax > 0 && val <= valMax)){
+        if (x < bx0) bx0 = x;
+        if (x > bx1) bx1 = x;
+        if (y < by0) by0 = y;
+        if (y > by1) by1 = y;
+        candidateCount++;
+      }
+    }
+  }
+  // 候補px不足 → 失敗：全画素α=255で復帰
+  if (candidateCount < N * 0.001 || bx1 < 0){
+    for (let i = 0; i < N; i++) d[i * 4 + 3] = 255;
+    ctx.putImageData(imgData, 0, 0);
+    if (typeof log === 'function') log(`[DBG] 矩形クロップ：候補px不足（${candidateCount}px）→ 元画像そのまま`);
+    return false;
+  }
+  // bbox を margin px 拡張
+  bx0 = Math.max(0, bx0 - marginPx);
+  by0 = Math.max(0, by0 - marginPx);
+  bx1 = Math.min(W - 1, bx1 + marginPx);
+  by1 = Math.min(H - 1, by1 + marginPx);
+  // 矩形内α=255、矩形外α=0
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      const i = (y * W + x) * 4 + 3;
+      if (x >= bx0 && x <= bx1 && y >= by0 && y <= by1){
+        d[i] = 255;
+      } else {
+        d[i] = 0;
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  const cropPct = ((bx1-bx0+1) * (by1-by0+1) / N * 100).toFixed(1);
+  if (typeof log === 'function') log(`[DBG] 矩形クロップ：候補=${candidateCount}px / box=${bx1-bx0+1}x${by1-by0+1} (${cropPct}%) / margin=${marginPx}px`);
+  return true;
+}
+
 // AIで背景除去：canvasのコンテキストにマスクを適用してアルファを書き戻す
 // 追加処理: ① マスク二値化（半透明問題解消） ② 影除去（無彩色グレー領域を縮める）
 //          ③ 商品が画像端に接している場合の対策で白余白を加えて推論
@@ -934,6 +1010,11 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   const { RawImage } = window._tjs;
   const W = canvas.width, H = canvas.height;
   const N = W * H;
+
+  // [v8.16] 白背景判定を最初に行う（後でB群検知に使用）
+  const initImageData = ctx.getImageData(0, 0, W, H);
+  const isWhiteBg = detectWhiteBackground(initImageData.data, W, H);
+  if (typeof log === 'function') log(`[DBG] 白背景判定: ${isWhiteBg ? 'YES' : 'no'}`);
 
   // ▼パディング: 画像の上下左右に白余白を追加してからAIに渡す
   // 「商品が画像端に接している」場合、AIマスクの該当部分が画像端と繋がってしまい、
@@ -1026,6 +1107,22 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   if (typeof log === 'function') {
     log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}%`);
   }
+
+  // [v8.16] B群検知：白背景なのに AI 占有率が極端に低い（白い箱・白い緩衝材を AI が背景判定）
+  //   想定: 76064/76065/76066（白い桃箱）, 76081（白い発泡トレイ＋ぶどう）など
+  //   AI失敗判定A（高占有率＋高中間値）の対極として、低占有率で発火
+  const aiFailedB = isWhiteBg && fgRatio < 0.25;
+  if (aiFailedB) {
+    if (typeof log === 'function') {
+      log(`[WARN] B群検知（白背景×低占有率）→ 矩形クロップに切り替え（占有率=${(fgRatio*100).toFixed(1)}%）`);
+    }
+    // ctx には元画像が残っているのでそのまま矩形クロップを実行
+    // marginPx は短辺の12.5%（1200pxなら150px。最大150でクランプ）
+    const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
+    chromaticRectCrop(ctx, W, H, 25, 200, margin);
+    return;
+  }
+
   // [v8.13] AI失敗時の処理：removeWhiteBg を試して、結果を「塊数」で評価する
   //  ① まず removeWhiteBg を実行
   //  ② 結果のマスクの連結成分（塊）を数える
@@ -1105,12 +1202,12 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     }
 
     if (!fallbackOK){
-      // 撤回：元画像をそのまま使う（全画素 α=255）
+      // [v8.15] 撤回時のフォールバック2段階目：彩度+暗さ矩形クロップ
+      //   元画像に戻したあと chromaticRectCrop を呼ぶ。
+      //   [v8.16] 共通関数化＋マージンを短辺2% → 12.5%（最大150px）に拡大。B群と統一。
       ctx.putImageData(backupImgData, 0, 0);
-      const imgData2 = ctx.getImageData(0, 0, W, H);
-      const d2 = imgData2.data;
-      for (let i = 0; i < N; i++) d2[i * 4 + 3] = 255;
-      ctx.putImageData(imgData2, 0, 0);
+      const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
+      chromaticRectCrop(ctx, W, H, 20, 200, margin);
     }
     return;
   }
@@ -1139,9 +1236,11 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       const minC = Math.min(r, g, b), maxC = Math.max(r, g, b);
       const sat = maxC - minC;
       const lum = (r + g + b) / 3;
-      // 「ほぼ純白」（彩度極低・高明度）は色相フィルタを通さず無条件で影/反射扱い
-      // → 撮影背景の白い反射を確実に削れるようにする
-      const isNearWhite = sat <= 8 && lum >= 230;
+      // [v8.16] 「純白」（彩度ほぼ0・極めて高明度）は色相フィルタを通さず無条件で影/反射扱い
+      // → 撮影背景の真っ白だけを確実に削る。商品の白パーツ（銀蓋・白箱・薄ベージュ等）は次の色相フィルタで保護
+      // 旧: sat<=8 && lum>=230 → 商品の白部品まで誤削除していた
+      // 新: sat<=2 && lum>=250 → ほぼ完全な (255,255,255) ピクセルだけ
+      const isNearWhite = sat <= 2 && lum >= 250;
       if (isNearWhite) return true;
       // 茶色・暖色系（赤みが青より明確に強い）は影ではない → ダンボール・木材・茶ラベルを保護
       if (r > b + 8) return false;
