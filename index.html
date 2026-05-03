@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.3]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※本体から離れた塊／本体に繋がった細い触手を除去</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.4]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※触手・弱フェザー・離れ塊を段階的に除去</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -609,6 +609,29 @@ function openMask(mask, W, H, radius){
   return removed;
 }
 
+// [v8.4] 弱フェザー除去
+// AIマスクの境界外側に拡散する薄いα領域（α=1〜threshold-1）を物理的に0化する。
+// 用途:
+//   - 商品から少し離れた位置に「微弱なマスク」が残ると、後段の autoCrop が
+//     その範囲まで含めて bbox を作ってしまい、切り抜き結果に「薄い背景の塊」
+//     が一緒に含まれる「切り抜き残り」になる。
+//   - 自然な境界フェザー（α≥threshold）は保持し、それより弱い拡散だけを切る。
+function clearWeakFeather(mask, W, H, threshold){
+  const N = W * H;
+  let cleared = 0;
+  for (let i = 0; i < N; i++){
+    const v = mask[i];
+    if (v > 0 && v < threshold){
+      mask[i] = 0;
+      cleared++;
+    }
+  }
+  if (typeof log === 'function' && cleared > 0){
+    log(`[DBG] 弱フェザー除去（α<${threshold}）: ${cleared}px (${(cleared/N*100).toFixed(2)}%)`);
+  }
+  return cleared;
+}
+
 // 孤立塊の除去
 // 最大塊を「本体」とみなし、ノイズ（極小）と「離れた小塊」を削除する
 // [v8.3] 改修ポイント:
@@ -618,7 +641,7 @@ function openMask(mask, W, H, radius){
 function removeIsolatedSmallBlobs(mask, W, H){
   const N = W * H;
   const SIZE_THRESHOLD_RATIO = 0.005; // 最大塊の0.5%未満は無条件で削除（ノイズ）
-  const PROTECT_SIZE_RATIO   = 0.10;  // [v8.3] 本体の10%以上は距離無視で保護
+  const PROTECT_SIZE_RATIO   = 0.05;  // [v8.4] 本体の5%以上は距離無視で保護（複数商品レイアウト対策強化）
   const DISTANCE_RATIO       = 0.40;  // [v8.3] 辺-辺距離が本体対角の40%超なら削除（中心距離0.6 相当）
   const ALPHA_THRESH = 128;
 
@@ -972,6 +995,9 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     // 矩形化判定：商品が長方形に近い形なら bounding box 内を全部不透明に
     rectifyMaskIfBoxLike(work, W, H);
 
+    // [v8.4] 弱フェザー除去：切り抜き残りの主因（autoCrop の bbox を不当に広げる弱α拡散）を切る
+    clearWeakFeather(work, W, H, 128);
+
     // 最終マスクを反映
     for (let i = 0; i < N; i++){
       d[i * 4 + 3] = work[i];
@@ -985,6 +1011,8 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   fillMaskHoles(mask, W, H);
   removeIsolatedSmallBlobs(mask, W, H);
   rectifyMaskIfBoxLike(mask, W, H);
+  // [v8.4] 弱フェザー除去はオフ時も実行（切り抜き残り対策の主体）
+  clearWeakFeather(mask, W, H, 128);
   const imgData = ctx.getImageData(0, 0, W, H);
   const d = imgData.data;
   for (let i = 0; i < N; i++){
@@ -1240,6 +1268,17 @@ function autoCrop(src){
 
   if (typeof log === 'function') {
     log(`[DBG] autoCrop: ${components.length}個の塊 → ${kept}個採用 (最大=${maxSize}px, box=${bx1-bx0+1}x${by1-by0+1})`);
+
+    // [v8.4] AI誤検出疑いの可視化：bbox が小さく中心から外れてる場合に警告
+    // 76052（瓶6本→3本）のような「AIが商品の一部しか拾わなかった」ケースで気付ける
+    const cropW = bx1 - bx0 + 1;
+    const cropH = by1 - by0 + 1;
+    const areaRatio = (cropW * cropH) / (W * H);
+    const cxOffset = Math.abs((bx0 + bx1) / 2 - W / 2) / W;
+    const cyOffset = Math.abs((by0 + by1) / 2 - H / 2) / H;
+    if (areaRatio < 0.30 && (cxOffset > 0.20 || cyOffset > 0.20)) {
+      log(`[WARN] AI誤検出疑い: bbox面積=${(areaRatio*100).toFixed(1)}% / 中心ずれX=${(cxOffset*100).toFixed(0)}% Y=${(cyOffset*100).toFixed(0)}% — 元画像の一部しか切り抜けていない可能性。「影除去オフ」を試してください。`, 'warn');
+    }
   }
 
   return cropTo(src, {x0: bx0, y0: by0, x1: bx1, y1: by1});
