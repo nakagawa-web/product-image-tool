@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.13]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※検知条件中間値率60%超に引上げ・removeWhiteBg試行→塊数で破壊判定</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.14]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※塊数閾値50→200に拡大（76013のような複数商品画像対策）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -1086,9 +1086,13 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
           }
         }
         if (size >= MIN_BLOB_SIZE) blobCount++;
-        if (blobCount > 100) break; // 早期打ち切り（破壊確定）
+        if (blobCount > 400) break; // 早期打ち切り（破壊確定・BLOB_LIMITの2倍）
       }
-      const BLOB_LIMIT = 50;
+      // [v8.14] BLOB_LIMIT を 50 → 200 に引き上げ
+      //   76013（アイス9個入り）が 51個で誤って破壊判定されていたため。
+      //   実商品が複数ある画像では塊数が数十個になるのが正常。
+      //   76067（2656個）のような明確な破壊だけ撤回する設計に。
+      const BLOB_LIMIT = 200;
       if (blobCount <= BLOB_LIMIT){
         fallbackOK = true;
         if (typeof log === 'function') log(`[DBG] removeWhiteBg 成功と判定（塊数=${blobCount} ≤ ${BLOB_LIMIT}）→ そのまま採用`);
