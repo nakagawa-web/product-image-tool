@@ -207,7 +207,7 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.5]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※箱型商品は自動で矩形化＋影除去＋穴埋め</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v7.8]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※AI暴発検知付き（占有率50%超でフォールバック）</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
@@ -427,18 +427,36 @@ async function ensureAiReady(progressCb){
 }
 
 // 矩形化判定：商品マスクが長方形に近い形なら bounding box 内を全部不透明に塗りつぶす
-// → 箱型商品（白い箱、ダンボール、桐箱など）の縁を直線化
-// 判定: bounding box 内のマスク埋まり率が高ければ「箱」と見なす
+// 判定: ① 縮小マスクの埋まり率が高い ② 4辺それぞれで前景ピクセルが連続している
+//        両方の条件を満たすときだけ矩形化（散在ノイズで bbox が広がるケースを排除）
 function rectifyMaskIfBoxLike(mask, W, H){
   const N = W * H;
-  const RECT_THRESHOLD = 0.85; // 85%以上埋まっていれば矩形化
+  const RECT_THRESHOLD = 0.90;  // 埋まり率（85→90%に厳格化）
+  const EDGE_THRESHOLD = 0.80;  // 4辺それぞれで前景ピクセル比率がこれ以上必要
+  const ERODE_PX = 4;
 
-  // bounding box を求める
+  // マスクを縮小（影/ノイズを削る）
+  const eroded = new Uint8Array(N);
+  for (let i = 0; i < N; i++) eroded[i] = mask[i] >= 128 ? 1 : 0;
+  for (let s = 0; s < ERODE_PX; s++){
+    const tmp = new Uint8Array(eroded);
+    for (let y = 1; y < H - 1; y++){
+      for (let x = 1; x < W - 1; x++){
+        const px = y * W + x;
+        if (!tmp[px]) continue;
+        if (!tmp[px-1] || !tmp[px+1] || !tmp[px-W] || !tmp[px+W]) {
+          eroded[px] = 0;
+        }
+      }
+    }
+  }
+
+  // 縮小マスクの bbox
   let x0 = W, y0 = H, x1 = 0, y1 = 0;
   let fgCount = 0;
   for (let y = 0; y < H; y++){
     for (let x = 0; x < W; x++){
-      if (mask[y * W + x] >= 128) {
+      if (eroded[y * W + x]) {
         if (x < x0) x0 = x;
         if (x > x1) x1 = x;
         if (y < y0) y0 = y;
@@ -448,20 +466,39 @@ function rectifyMaskIfBoxLike(mask, W, H){
     }
   }
 
-  if (fgCount === 0) return; // 商品なし
+  if (fgCount === 0) return;
 
   const bw = x1 - x0 + 1;
   const bh = y1 - y0 + 1;
   const bboxArea = bw * bh;
   const fillRatio = fgCount / bboxArea;
 
+  // 4辺の連続性チェック：各辺ラインの前景ピクセル比率
+  const countLine = (xs, xe, ys, ye) => {
+    let total = 0, fg = 0;
+    for (let y = ys; y <= ye; y++){
+      for (let x = xs; x <= xe; x++){
+        total++;
+        if (eroded[y * W + x]) fg++;
+      }
+    }
+    return total > 0 ? fg / total : 0;
+  };
+  const topRatio    = countLine(x0, x1, y0, y0);
+  const bottomRatio = countLine(x0, x1, y1, y1);
+  const leftRatio   = countLine(x0, x0, y0, y1);
+  const rightRatio  = countLine(x1, x1, y0, y1);
+  const minEdge = Math.min(topRatio, bottomRatio, leftRatio, rightRatio);
+
   if (typeof log === 'function') {
-    log(`[DBG] 矩形化判定: 埋まり率=${(fillRatio*100).toFixed(1)}% (閾値${RECT_THRESHOLD*100}%)`);
+    log(`[DBG] 矩形化判定: 埋率=${(fillRatio*100).toFixed(1)}% / 辺最小=${(minEdge*100).toFixed(1)}% (閾値 埋率${RECT_THRESHOLD*100}%・辺${EDGE_THRESHOLD*100}%)`);
   }
 
-  if (fillRatio < RECT_THRESHOLD) return; // 長方形でない → 何もしない
+  // 両条件を満たさなければ矩形化しない
+  if (fillRatio < RECT_THRESHOLD) return;
+  if (minEdge < EDGE_THRESHOLD) return;
 
-  // 矩形化: bounding box 内のすべてのピクセルを不透明に
+  // 矩形化
   let added = 0;
   for (let y = y0; y <= y1; y++){
     for (let x = x0; x <= x1; x++){
@@ -472,8 +509,16 @@ function rectifyMaskIfBoxLike(mask, W, H){
       }
     }
   }
+  // bbox 外の元マスク残骸（影や微小ノイズ）を透明化
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      if (y >= y0 && y <= y1 && x >= x0 && x <= x1) continue;
+      const i = y * W + x;
+      if (mask[i] > 0) mask[i] = 0;
+    }
+  }
   if (typeof log === 'function') {
-    log(`[DBG] 矩形化適用: ${added}px 追加で不透明化`);
+    log(`[DBG] 矩形化適用: 内側塗り+${added}px、外側影をクリア`);
   }
 }
 
@@ -607,6 +652,27 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
       mask[i] = Math.round(((v - (BINARY_THRESHOLD - FEATHER_BAND)) / (FEATHER_BAND * 2)) * 255);
     }
   }
+
+  // ▼AI暴発検知: マスクが画像の50%以上を占めているか
+  // 商品単体撮影なら通常マスクは20-40%くらい。50%超は「画像全体を商品と誤認した」状態
+  let fgPx = 0;
+  for (let i = 0; i < N; i++) if (mask[i] >= 128) fgPx++;
+  const fgRatio = fgPx / N;
+  if (typeof log === 'function') {
+    log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}%`);
+  }
+  if (fgRatio > 0.50) {
+    // AI失敗とみなし、切り抜きをキャンセル → 全領域を不透明（=元画像のまま）
+    if (typeof log === 'function') {
+      log(`[DBG] ⚠ AI失敗（占有率50%超）→ 切り抜きをキャンセルして元画像をそのまま使用`);
+    }
+    const imgData = ctx.getImageData(0, 0, W, H);
+    const d = imgData.data;
+    for (let i = 0; i < N; i++) d[i * 4 + 3] = 255;
+    ctx.putImageData(imgData, 0, 0);
+    return;
+  }
+  // ▲AI暴発検知ここまで
 
   // ② 影除去：マスクの境界（外側エッジ）から内側に向かって、
   //    「無彩色（彩度低い）かつ暗め～中明度」のピクセルを段階的に除去
