@@ -1011,20 +1011,10 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   const W = canvas.width, H = canvas.height;
   const N = W * H;
 
-  // [v8.17] 白背景なら AI をスキップして矩形クロップに直行
-  //   合意した(a): 四辺95%以上が白なら矩形モード強制
-  //   v8.16では誤って fgRatio<0.25 の追加条件を入れたため、AIが部分的に箱を検出できた A群/B群 で発火せず無効化されていた
-  //   → ここで早期 return することで AI 推論・影除去・縁削り等の post-processing を全て回避し、
-  //     白い箱・銀の蓋・薄ベージュ等の白パーツを物理的に保全する
+  // [v8.16] 白背景判定（後段の aiFailedB トリガーで使用、A群を巻き込まないため早期return はしない）
   const initImageData = ctx.getImageData(0, 0, W, H);
   const isWhiteBg = detectWhiteBackground(initImageData.data, W, H);
-  if (typeof log === 'function') log(`[DBG] 白背景判定: ${isWhiteBg ? 'YES → 矩形クロップに直行' : 'no → AI処理'}`);
-  if (isWhiteBg) {
-    // marginPx は短辺の12.5%（1200pxなら150px。最大150でクランプ）
-    const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
-    chromaticRectCrop(ctx, W, H, 25, 200, margin);
-    return;
-  }
+  if (typeof log === 'function') log(`[DBG] 白背景判定: ${isWhiteBg ? 'YES' : 'no'}`);
 
   // ▼パディング: 画像の上下左右に白余白を追加してからAIに渡す
   // 「商品が画像端に接している」場合、AIマスクの該当部分が画像端と繋がってしまい、
@@ -1116,6 +1106,20 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   const aiMidRatio = cntMid / N;
   if (typeof log === 'function') {
     log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}%`);
+  }
+
+  // [v8.16] B群検知：白背景なのに AI 占有率が極端に低い（白い箱・白い緩衝材を AI が背景判定）
+  //   想定: 76064/76065/76066（白い桃箱）, 76081（白い発泡トレイ＋ぶどう）など
+  //   AI失敗判定A（高占有率＋高中間値）の対極として、低占有率で発火
+  //   A群（76026 等、占有率30〜50%）を巻き込まないため fgRatio<0.25 を厳守
+  const aiFailedB = isWhiteBg && fgRatio < 0.25;
+  if (aiFailedB) {
+    if (typeof log === 'function') {
+      log(`[WARN] B群検知（白背景×低占有率）→ 矩形クロップに切り替え（占有率=${(fgRatio*100).toFixed(1)}%）`);
+    }
+    const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
+    chromaticRectCrop(ctx, W, H, 25, 200, margin);
+    return;
   }
 
   // [v8.13] AI失敗時の処理：removeWhiteBg を試して、結果を「塊数」で評価する
