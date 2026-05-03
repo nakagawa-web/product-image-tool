@@ -207,13 +207,28 @@
       </label>
     </div>
     <div class="row">
-      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.6]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※触手・弱フェザー・縁の影・離れ塊・端ノイズを段階的に除去</span></label>
+      <label>影除去 強さ <span style="color:#c23829;font-weight:600;">[v8.8]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※触手・弱フェザー・離れ塊・端ノイズを段階的に除去</span></label>
       <select id="shadowStrength" style="font-family:inherit;font-size:13px;padding:6px 10px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
         <option value="0">0：オフ（AI結果そのまま）</option>
         <option value="1">1：弱</option>
         <option value="2" selected>2：中（推奨）</option>
         <option value="3">3：強</option>
       </select>
+    </div>
+    <div class="row">
+      <label>縁の影削り（px） <span style="color:#c23829;font-weight:600;">[v8.7]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※商品の縁から広がる影/フェザーをマスク収縮で削る。影除去設定と独立して動作。</span></label>
+      <input type="range" min="0" max="10" value="2" id="erodeSlider" oninput="document.getElementById('erodeVal').textContent=this.value+'px'">
+      <span class="val" id="erodeVal">2px</span>
+    </div>
+    <div class="row">
+      <label>縁ホワイトキル（px） <span style="color:#c23829;font-weight:600;">[v8.8]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※マスク境界からN px内側だけ「白に近いピクセル」を背景化。商品の中央は安全。白背景商品の影残り対策。</span></label>
+      <input type="range" min="0" max="50" value="0" id="whiteKillWidth" oninput="document.getElementById('whiteKillWidthVal').textContent=this.value+'px'">
+      <span class="val" id="whiteKillWidthVal">0px</span>
+    </div>
+    <div class="row">
+      <label>　└ しきい値 <span style="font-size:11px;color:var(--color-text-tertiary);">（min(R,G,B)≥この値なら白判定）</span></label>
+      <input type="range" min="200" max="250" value="225" id="whiteKillThresh" oninput="document.getElementById('whiteKillThreshVal').textContent=this.value">
+      <span class="val" id="whiteKillThreshVal">225</span>
     </div>
     <div class="row">
       <label>背景色（出力2）<br><span style="font-size:11px;color:var(--color-text-tertiary);">※デバッグ用：白以外で透明部分を確認</span></label>
@@ -675,6 +690,79 @@ function erodeMask(mask, W, H, radius){
   return removed;
 }
 
+// [v8.8] 縁ホワイトキル
+// マスクの境界から N px 内側の範囲で、「白に近い・低彩度」のピクセルを α=0 にする。
+// 用途: 白背景の商品写真で、白背景がマスクに含まれてしまい、合成時に下のイメージ画像
+//       との境目に灰色っぽい縁として残るケースの対策。
+// 副作用: 商品自体の縁が白い場合（白い陶器、白パッケージ等）はその部分も削れる。
+// 中央の白（皿の中心、白あんなど）は距離が大きいので守られる。
+//
+// 引数:
+//   mask  - α配列 (Uint8Array)
+//   data  - RGBA連続配列 (Uint8ClampedArray, 各px 4byte)
+//   width - 境界からの最大距離（px）。0なら何もしない
+//   thresh- 白判定のしきい値（min(R,G,B) >= thresh なら白候補）
+function whiteKillEdge(mask, data, W, H, width, thresh){
+  if (width <= 0) return 0;
+  const N = W * H;
+  const SAT_TOL = 15; // max-min がこれ以下なら低彩度（白/グレー）
+
+  // 4近傍 BFS で距離変換（境界=1、内側に向かって増加）
+  const dist = new Int16Array(N);
+  const queue = [];
+  // 境界（前景で、4近傍に背景があるピクセル）を距離 1 で初期化
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < W; x++){
+      const i = y * W + x;
+      if (mask[i] < 128) continue; // 背景はスキップ
+      const left  = x > 0     ? mask[i-1] < 128 : true;
+      const right = x < W - 1 ? mask[i+1] < 128 : true;
+      const up    = y > 0     ? mask[i-W] < 128 : true;
+      const down  = y < H - 1 ? mask[i+W] < 128 : true;
+      if (left || right || up || down){
+        dist[i] = 1;
+        queue.push(i);
+      }
+    }
+  }
+  // BFS で width まで伝搬（それより内側は調べない）
+  let head = 0;
+  while (head < queue.length){
+    const i = queue[head++];
+    const d = dist[i];
+    if (d >= width) continue; // これ以上奥は不要
+    const x = i % W, y = (i / W) | 0;
+    const nbrs = [];
+    if (x > 0)     nbrs.push(i-1);
+    if (x < W-1)   nbrs.push(i+1);
+    if (y > 0)     nbrs.push(i-W);
+    if (y < H-1)   nbrs.push(i+W);
+    for (const j of nbrs){
+      if (mask[j] >= 128 && dist[j] === 0){
+        dist[j] = d + 1;
+        queue.push(j);
+      }
+    }
+  }
+
+  // dist が 1〜width のピクセルだけ白判定
+  let killed = 0;
+  for (let i = 0; i < N; i++){
+    if (dist[i] === 0) continue; // 範囲外
+    const r = data[i*4], g = data[i*4+1], b = data[i*4+2];
+    const minC = Math.min(r, g, b);
+    const maxC = Math.max(r, g, b);
+    if (minC >= thresh && (maxC - minC) <= SAT_TOL){
+      mask[i] = 0;
+      killed++;
+    }
+  }
+  if (typeof log === 'function' && killed > 0){
+    log(`[DBG] 縁ホワイトキル（幅${width}px、しきい値${thresh}）: ${killed}px (${(killed/N*100).toFixed(2)}%)`);
+  }
+  return killed;
+}
+
 // 孤立塊の除去
 // 最大塊を「本体」とみなし、ノイズ（極小）と「離れた小塊」を削除する
 // [v8.3] 改修ポイント:
@@ -1055,10 +1143,16 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     // [v8.4] 弱フェザー除去：切り抜き残りの主因（autoCrop の bbox を不当に広げる弱α拡散）を切る
     clearWeakFeather(work, W, H, 128);
 
-    // [v8.6] マスク内側収縮：商品の縁から外側に広がる「強フェザー」（α≥128 の薄い拡散）を削る
-    // 影除去強度に連動：弱=1px、中=1px、強=2px。商品本体も同量縮むが、視覚上はほぼ気付かない。
-    const erodeR = [0, 1, 1, 2][shadowStrength];
+    // [v8.7] マスク内側収縮：商品の縁から外側に広がる「強フェザー」（α≥128 の薄い拡散）を削る
+    // ユーザー設定の「縁の影削り」スライダー（独立設定）から半径を取得
+    const erodeR = parseInt(document.getElementById('erodeSlider').value) || 0;
     erodeMask(work, W, H, erodeR);
+
+    // [v8.8] 縁ホワイトキル：マスク境界からN px内側だけ「白に近いピクセル」を背景化
+    // 白背景の商品写真でマスクが背景を含んでしまうケースの対策
+    const wkW = parseInt(document.getElementById('whiteKillWidth').value) || 0;
+    const wkT = parseInt(document.getElementById('whiteKillThresh').value) || 225;
+    whiteKillEdge(work, d, W, H, wkW, wkT);
 
     // 最終マスクを反映
     for (let i = 0; i < N; i++){
@@ -1075,8 +1169,16 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   rectifyMaskIfBoxLike(mask, W, H);
   // [v8.4] 弱フェザー除去はオフ時も実行（切り抜き残り対策の主体）
   clearWeakFeather(mask, W, H, 128);
+  // [v8.7] 縁の影削り：影除去オフでも独立スライダーから半径を取得して実行
+  const erodeR_off = parseInt(document.getElementById('erodeSlider').value) || 0;
+  erodeMask(mask, W, H, erodeR_off);
+  // [v8.8] 縁ホワイトキル：影除去オフでも独立スライダーから実行
+  // imgData を先に取得して RGB 配列を whiteKillEdge に渡す
   const imgData = ctx.getImageData(0, 0, W, H);
   const d = imgData.data;
+  const wkW_off = parseInt(document.getElementById('whiteKillWidth').value) || 0;
+  const wkT_off = parseInt(document.getElementById('whiteKillThresh').value) || 225;
+  whiteKillEdge(mask, d, W, H, wkW_off, wkT_off);
   for (let i = 0; i < N; i++){
     d[i * 4 + 3] = mask[i];
   }
