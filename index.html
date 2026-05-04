@@ -113,7 +113,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.16-2</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.16-3</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -1111,14 +1111,17 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}%`);
   }
 
-  // [v8.16] B群検知：白背景なのに AI が前景過剰判定（白い箱・白い緩衝材を「商品」と誤認）
-  //   実測: 76064/65/66/81 で AI 占有率 64〜90%（白い箱が前景に飲み込まれる）
-  //   A群代表 76026 は 50% で踏みとどまっているため、閾値 65% で線引き
+  // [v8.16] B群検知：AI が前景過剰判定（白い箱・白い緩衝材を「商品」として全体を取り込む）
+  //   実測: 76064/65/66 で AI 占有率 74〜90%（白い箱が前景に飲み込まれる）
+  //   A群代表 76067/68/26 は 50〜65% で踏みとどまっているため、閾値 70% で線引き
   // [v8.16-2] 旧 fgRatio<0.25 はロジック逆向きだったため fgRatio>0.65 に修正
-  const aiFailedB = isWhiteBg && fgRatio > 0.65;
+  // [v8.16-3] 白背景判定が canvas レンダリングで信頼できなかったため isWhiteBg 条件を削除し、占有率のみで判定。
+  //           閾値 65% → 70% に上げて A群代表 76067 (64.6%) を確実にスキップ。
+  //           76081 (64%) は A群閾値を巻き込まずに catch する手段なし → 漏れる
+  const aiFailedB = fgRatio > 0.70;
   if (aiFailedB) {
     if (typeof log === 'function') {
-      log(`[WARN] B群検知（白背景×高占有率）→ 矩形クロップに切り替え（占有率=${(fgRatio*100).toFixed(1)}%）`);
+      log(`[WARN] B群検知（高占有率 ${(fgRatio*100).toFixed(1)}% > 70%）→ 矩形クロップに切り替え`);
     }
     const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
     chromaticRectCrop(ctx, W, H, 25, 200, margin);
