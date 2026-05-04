@@ -85,9 +85,9 @@
   .logo-slot input[type=text], .icon-slot input[type=text] { font-family: inherit; font-size: 12px; padding: 5px 8px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); color: var(--color-text-primary); width: 100%; }
   .logo-slot input[type=text]:focus, .icon-slot input[type=text]:focus { outline: none; border-color: var(--color-text-primary); }
   .logo-slot select, .icon-slot select { font-family: inherit; font-size: 12px; padding: 5px 6px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); color: var(--color-text-primary); width: 100%; }
-  .logo-slot .logo-thumb, .icon-slot .logo-thumb { width: 48px; height: 48px; border-radius: 4px; background: var(--color-background-tertiary); background-size: contain; background-repeat: no-repeat; background-position: center; border: 0.5px solid var(--color-border-tertiary); position: relative; }
+  .logo-slot .logo-thumb, .icon-slot .logo-thumb { width: 48px; height: 48px; border-radius: 4px; background: var(--color-background-tertiary); background-size: contain; background-repeat: no-repeat; background-position: center; border: 0.5px solid var(--color-border-tertiary); position: relative; cursor: pointer; }
   .logo-slot .logo-thumb input[type=file], .icon-slot .logo-thumb input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
-  .logo-slot .logo-thumb.empty::after, .icon-slot .logo-thumb.empty::after { content: '📷'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; opacity: 0.4; }
+  .logo-slot .logo-thumb.empty::after, .icon-slot .logo-thumb.empty::after { content: '📷'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; opacity: 0.4; pointer-events: none; }
   .logo-slot .logo-filename, .icon-slot .logo-filename { font-size: 10px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 4px; }
   .logo-slot .delete-btn, .icon-slot .delete-btn { background: none; border: none; cursor: pointer; color: var(--color-text-tertiary); font-size: 18px; line-height: 1; padding: 0; }
   .logo-slot .delete-btn:hover, .icon-slot .delete-btn:hover { color: var(--color-text-danger); }
@@ -124,7 +124,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-2</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-5</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -1402,8 +1402,9 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   const fgRatio = fgPx / N;
   // [v8.10] 中間値率は AI 生出力ベース（30 < v < 225 = 真ん中の広い帯）
   const aiMidRatio = cntMid / N;
+  const ai255Ratio = cnt255 / N;
   if (typeof log === 'function') {
-    log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}%`);
+    log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}% / AI確信FG率=${(ai255Ratio*100).toFixed(1)}%`);
   }
 
   // [v8.16] B群検知：AI が前景過剰判定（白い箱・白い緩衝材を「商品」として全体を取り込む）
@@ -1415,6 +1416,19 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   //   B群: マスクが画像端まで広がる → bbox ≈ 99%
   //   C群: マスクが商品にきれいに収まる → bbox < 90%
   //   閾値 0.92 で線引き（C群を救う、B群は確実に捕捉）
+  // [v8.18-5] D群検知を追加：AI 確信FG率 (=255) > 25% かつ占有率 > 60% で発火
+  //   D群実測: 76079/80/85 で =255率 33〜45%、AIマスクが箱輪郭で粗いフリンジを生成
+  //   A群代表 76026/67/68 は =255率 0.3〜0.8%（ほぼ確信FG無し）→ 完全分離
+  //   76081 (B群漏れ) も =255率 40.6% で catch される
+  if (fgRatio > 0.60 && ai255Ratio > 0.25) {
+    if (typeof log === 'function') {
+      log(`[WARN] D群検知（占有率 ${(fgRatio*100).toFixed(1)}% / AI確信FG率 ${(ai255Ratio*100).toFixed(1)}% > 25%）→ 矩形クロップに切り替え`);
+    }
+    const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
+    chromaticRectCrop(ctx, W, H, 25, 200, margin);
+    return;
+  }
+
   if (fgRatio > 0.70) {
     // bbox 計算
     let minX = W, minY = H, maxX = -1, maxY = -1;
