@@ -113,7 +113,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.16-1</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.16-2</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -927,13 +927,14 @@ function fillMaskHoles(mask, W, H){
   }
 }
 
-// [v8.16] 白背景検知：四辺ピクセルの95%以上が「白に近い」なら true
+// [v8.16] 白背景検知：四辺ピクセルの90%以上が「白に近い」なら true
 // 用途: 白背景の白い箱・白い緩衝材など、AI が背景と区別できない B群対策の前段判定
+// [v8.16-2] 閾値を緩和: minC>=235 → minC>=215（縁の薄いシャドウを許容）、95%→90%（小さなノイズを許容）
 function detectWhiteBackground(d, W, H){
   const isWhitePx = (i) => {
     const r = d[i], g = d[i+1], b = d[i+2];
     const minC = Math.min(r,g,b), maxC = Math.max(r,g,b);
-    return minC >= 235 && (maxC - minC) <= 15;
+    return minC >= 215 && (maxC - minC) <= 20;
   };
   let total = 0, white = 0;
   for (let x = 0; x < W; x++){
@@ -944,7 +945,9 @@ function detectWhiteBackground(d, W, H){
     if (isWhitePx((y * W) * 4)) white++; total++;
     if (isWhitePx((y * W + W - 1) * 4)) white++; total++;
   }
-  return total > 0 ? (white / total) >= 0.95 : false;
+  const ratio = total > 0 ? white / total : 0;
+  if (typeof log === 'function') log(`[DBG] 白背景判定 詳細: 四辺の白ピクセル率=${(ratio*100).toFixed(1)}% (閾値 90%)`);
+  return ratio >= 0.90;
 }
 
 // [v8.16] 有彩色＋暗ピクセル bbox 矩形クロップ（B群対策）
@@ -1108,14 +1111,14 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
     log(`[DBG] 商品マスク占有率=${(fgRatio*100).toFixed(1)}% / AI中間値率=${(aiMidRatio*100).toFixed(1)}%`);
   }
 
-  // [v8.16] B群検知：白背景なのに AI 占有率が極端に低い（白い箱・白い緩衝材を AI が背景判定）
-  //   想定: 76064/76065/76066（白い桃箱）, 76081（白い発泡トレイ＋ぶどう）など
-  //   AI失敗判定A（高占有率＋高中間値）の対極として、低占有率で発火
-  //   A群（76026 等、占有率30〜50%）を巻き込まないため fgRatio<0.25 を厳守
-  const aiFailedB = isWhiteBg && fgRatio < 0.25;
+  // [v8.16] B群検知：白背景なのに AI が前景過剰判定（白い箱・白い緩衝材を「商品」と誤認）
+  //   実測: 76064/65/66/81 で AI 占有率 64〜90%（白い箱が前景に飲み込まれる）
+  //   A群代表 76026 は 50% で踏みとどまっているため、閾値 65% で線引き
+  // [v8.16-2] 旧 fgRatio<0.25 はロジック逆向きだったため fgRatio>0.65 に修正
+  const aiFailedB = isWhiteBg && fgRatio > 0.65;
   if (aiFailedB) {
     if (typeof log === 'function') {
-      log(`[WARN] B群検知（白背景×低占有率）→ 矩形クロップに切り替え（占有率=${(fgRatio*100).toFixed(1)}%）`);
+      log(`[WARN] B群検知（白背景×高占有率）→ 矩形クロップに切り替え（占有率=${(fgRatio*100).toFixed(1)}%）`);
     }
     const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
     chromaticRectCrop(ctx, W, H, 25, 200, margin);
