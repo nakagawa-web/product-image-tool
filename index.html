@@ -80,6 +80,17 @@
   .col-preview td.hdr { color: var(--color-text-tertiary); font-style: italic; }
   .preview-name { font-size: 12px; color: var(--color-text-secondary); background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 8px 12px; margin-top: 8px; font-family: var(--font-mono); }
   .preview-name strong { color: var(--color-text-primary); font-weight: 500; }
+  .logo-slot { display: grid; grid-template-columns: 1fr 56px 110px 80px 24px; gap: 8px; align-items: center; padding: 8px 10px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); margin-bottom: 6px; }
+  .icon-slot { display: grid; grid-template-columns: 56px 1fr 80px 24px; gap: 8px; align-items: center; padding: 8px 10px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); margin-bottom: 6px; }
+  .logo-slot input[type=text], .icon-slot input[type=text] { font-family: inherit; font-size: 12px; padding: 5px 8px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); color: var(--color-text-primary); width: 100%; }
+  .logo-slot input[type=text]:focus, .icon-slot input[type=text]:focus { outline: none; border-color: var(--color-text-primary); }
+  .logo-slot select, .icon-slot select { font-family: inherit; font-size: 12px; padding: 5px 6px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); color: var(--color-text-primary); width: 100%; }
+  .logo-slot .logo-thumb, .icon-slot .logo-thumb { width: 48px; height: 48px; border-radius: 4px; background: var(--color-background-tertiary); background-size: contain; background-repeat: no-repeat; background-position: center; border: 0.5px solid var(--color-border-tertiary); position: relative; }
+  .logo-slot .logo-thumb input[type=file], .icon-slot .logo-thumb input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .logo-slot .logo-thumb.empty::after, .icon-slot .logo-thumb.empty::after { content: '📷'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; opacity: 0.4; }
+  .logo-slot .logo-filename, .icon-slot .logo-filename { font-size: 10px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 4px; }
+  .logo-slot .delete-btn, .icon-slot .delete-btn { background: none; border: none; cursor: pointer; color: var(--color-text-tertiary); font-size: 18px; line-height: 1; padding: 0; }
+  .logo-slot .delete-btn:hover, .icon-slot .delete-btn:hover { color: var(--color-text-danger); }
   .tag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
   .tag-img  { background: var(--color-background-info);    color: var(--color-text-info); }
   .tag-prod { background: var(--color-background-success); color: var(--color-text-success); }
@@ -113,7 +124,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.16-3</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-2</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -177,9 +188,44 @@
     <div id="colPreview" class="col-preview" style="display:none;"></div>
   </div>
 
-  <!-- 4. 設定 -->
+  <!-- 4. ロゴ合成（任意） -->
   <div class="section">
-    <div class="title">4. 設定</div>
+    <div class="title">4. ロゴ合成（任意）</div>
+    <div class="row" style="margin-bottom:6px;">
+      <label>キーワード照合列</label>
+      <input type="text" id="logoColAlpha" value="A" maxlength="3" style="width:64px; text-transform:uppercase; font-family:var(--font-mono);" oninput="this.value=this.value.toUpperCase();">
+      <span style="font-size:12px; color:var(--color-text-tertiary);">この列にキーワードが含まれる行の出力1にロゴを合成（部分一致）</span>
+    </div>
+    <div id="logoSlots" style="margin-top:10px;"></div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:12px;">
+      <button type="button" id="addLogoBtn" onclick="addLogoSlot()" style="font-size:12px;padding:6px 12px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);cursor:pointer;">＋ スロットを追加</button>
+      <span id="logoSlotCount" style="font-size:11px;color:var(--color-text-tertiary);"></span>
+    </div>
+  </div>
+
+  <!-- 5. アイコン合成（全商品共通） -->
+  <div class="section">
+    <div class="title">5. アイコン合成（全商品共通）</div>
+    <div class="row">
+      <label>アイコンサイズ</label>
+      <input type="range" min="5" max="30" value="15" id="iconSizeSlider" oninput="document.getElementById('iconSizeVal').textContent=this.value+'%'">
+      <span class="val" id="iconSizeVal">15%</span>
+    </div>
+    <div class="row">
+      <label>角からの距離<br><span style="font-size:11px;color:var(--color-text-tertiary);">※0pxで角にピッタリ貼り付け</span></label>
+      <input type="range" min="0" max="60" value="20" id="iconMarginSlider" oninput="document.getElementById('iconMarginVal').textContent=this.value+'px'">
+      <span class="val" id="iconMarginVal">20px</span>
+    </div>
+    <div id="iconSlots" style="margin-top:10px;"></div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:12px;">
+      <button type="button" id="addIconBtn" onclick="addIconSlot()" style="font-size:12px;padding:6px 12px;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);background:var(--color-background-primary);cursor:pointer;">＋ スロットを追加</button>
+      <span id="iconSlotCount" style="font-size:11px;color:var(--color-text-tertiary);"></span>
+    </div>
+  </div>
+
+  <!-- 6. 設定 -->
+  <div class="section">
+    <div class="title">6. 設定</div>
     <div class="row">
       <label>商品画像キーワード</label>
       <input type="text" id="keyword" value="tan" style="width:120px;">
@@ -222,13 +268,13 @@
     </div>
     <div class="row">
       <label>縁ホワイトキル（px） <span style="color:#c23829;font-weight:600;">[v8.9]</span><br><span style="font-size:11px;color:var(--color-text-tertiary);">※マスク境界からN px内側だけ「白〜薄グレーのピクセル」を背景化。商品の中央は安全。白背景商品の影残り対策。</span></label>
-      <input type="range" min="0" max="50" value="0" id="whiteKillWidth" oninput="document.getElementById('whiteKillWidthVal').textContent=this.value+'px'">
-      <span class="val" id="whiteKillWidthVal">0px</span>
+      <input type="range" min="0" max="50" value="8" id="whiteKillWidth" oninput="document.getElementById('whiteKillWidthVal').textContent=this.value+'px'">
+      <span class="val" id="whiteKillWidthVal">8px</span>
     </div>
     <div class="row">
       <label>　└ しきい値 <span style="font-size:11px;color:var(--color-text-tertiary);">（平均輝度≥この値なら白判定。180=薄影も含む / 230=純白のみ）</span></label>
-      <input type="range" min="180" max="250" value="225" id="whiteKillThresh" oninput="document.getElementById('whiteKillThreshVal').textContent=this.value">
-      <span class="val" id="whiteKillThreshVal">225</span>
+      <input type="range" min="180" max="250" value="215" id="whiteKillThresh" oninput="document.getElementById('whiteKillThreshVal').textContent=this.value">
+      <span class="val" id="whiteKillThreshVal">215</span>
     </div>
     <div class="row">
       <label>背景色（出力2）<br><span style="font-size:11px;color:var(--color-text-tertiary);">※デバッグ用：白以外で透明部分を確認</span></label>
@@ -282,6 +328,255 @@
 </script>
 <script>
 let allImages={}, productCodes=[], generatedFiles=[], rawRows=[];
+
+// ===== ロゴ合成スロット管理 =====
+const MAX_LOGO_SLOTS = 30;
+const DEFAULT_LOGO_SLOTS = 5;
+let logoSlots = []; // [{id, keyword, fileObj, image, position, fileName}]
+
+function addLogoSlot(){
+  if (logoSlots.length >= MAX_LOGO_SLOTS) return;
+  const id = 'logo_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  logoSlots.push({ id, keyword: '', fileObj: null, image: null, position: 'tl', fileName: '' });
+  renderLogoSlots();
+}
+
+function removeLogoSlot(id){
+  logoSlots = logoSlots.filter(s => s.id !== id);
+  renderLogoSlots();
+}
+
+function renderLogoSlots(){
+  const container = document.getElementById('logoSlots');
+  if (!container) return;
+  container.innerHTML = '';
+  logoSlots.forEach(slot => {
+    const row = document.createElement('div');
+    row.className = 'logo-slot';
+    const thumbStyle = slot.image ? `background-image:url('${slot.image.src}');` : '';
+    const thumbCls = slot.image ? 'logo-thumb' : 'logo-thumb empty';
+    row.innerHTML = `
+      <input type="text" placeholder="キーワード（部分一致）" value="${escapeAttr(slot.keyword)}" data-id="${slot.id}" data-field="keyword">
+      <div class="${thumbCls}" style="${thumbStyle}">
+        <input type="file" accept="image/*" data-id="${slot.id}" data-field="file" title="ロゴ画像を選択">
+      </div>
+      <div class="logo-filename" title="${escapeAttr(slot.fileName)}">${slot.fileName || '未選択'}</div>
+      <select data-id="${slot.id}" data-field="position">
+        <option value="tl"${slot.position==='tl'?' selected':''}>左上</option>
+        <option value="tr"${slot.position==='tr'?' selected':''}>右上</option>
+        <option value="bl"${slot.position==='bl'?' selected':''}>左下</option>
+      </select>
+      <button type="button" class="delete-btn" onclick="removeLogoSlot('${slot.id}')" title="削除">×</button>
+    `;
+    container.appendChild(row);
+  });
+  // イベント配線
+  container.querySelectorAll('input[type=text][data-field=keyword]').forEach(inp => {
+    inp.addEventListener('input', e => {
+      const slot = logoSlots.find(s => s.id === e.target.dataset.id);
+      if (slot) slot.keyword = e.target.value;
+    });
+  });
+  container.querySelectorAll('input[type=file][data-field=file]').forEach(inp => {
+    inp.addEventListener('change', async e => {
+      const slot = logoSlots.find(s => s.id === e.target.dataset.id);
+      if (!slot || !e.target.files[0]) return;
+      const f = e.target.files[0];
+      slot.fileObj = f;
+      slot.fileName = f.name;
+      try {
+        slot.image = await loadImg(f);
+      } catch(err) {
+        slot.image = null;
+        log(`ロゴ画像の読込失敗: ${f.name}`, 'err');
+      }
+      renderLogoSlots();
+    });
+  });
+  container.querySelectorAll('select[data-field=position]').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const slot = logoSlots.find(s => s.id === e.target.dataset.id);
+      if (slot) slot.position = e.target.value;
+    });
+  });
+  // カウンタ更新
+  const cnt = document.getElementById('logoSlotCount');
+  if (cnt) cnt.textContent = `${logoSlots.length} / ${MAX_LOGO_SLOTS}`;
+  const addBtn = document.getElementById('addLogoBtn');
+  if (addBtn) addBtn.disabled = logoSlots.length >= MAX_LOGO_SLOTS;
+}
+
+function escapeAttr(s){ return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// 商品コードに対応する行から、マッチするロゴを返す
+function getMatchingLogos(code){
+  if (!rawRows.length || logoSlots.length === 0) return [];
+  // 有効なスロット (キーワード+画像 両方あり) のみを抽出
+  const validSlots = logoSlots.filter(s => s.keyword.trim() && s.image);
+  if (validSlots.length === 0) return [];
+  // 商品コード列とロゴ照合列のインデックスを取得
+  const codeColIdx = alphaToIndex(document.getElementById('colAlpha').value);
+  const logoColIdx = alphaToIndex(document.getElementById('logoColAlpha').value);
+  const skipHeader = parseInt(document.getElementById('skipHeader').value);
+  const dataRows = skipHeader === 1 ? rawRows.slice(1) : rawRows;
+  // 商品コードで行を特定
+  const normCode = toHalfLower(code);
+  const row = dataRows.find(r => toHalfLower(String(r[codeColIdx] || '').trim()) === normCode);
+  if (!row) return [];
+  // ロゴ照合列の値で部分一致判定
+  const cellValue = toHalfLower(String(row[logoColIdx] || ''));
+  if (!cellValue) return [];
+  const matches = [];
+  for (const slot of validSlots) {
+    const kw = toHalfLower(slot.keyword);
+    if (kw && cellValue.includes(kw)) matches.push(slot);
+  }
+  return matches;
+}
+
+// ロゴ合成: cx (出力1のキャンバスコンテキスト) に matched ロゴを描画
+// S: キャンバス短辺サイズ (1200想定)
+function drawLogos(cx, S, matched){
+  if (!matched || matched.length === 0) return;
+  const logoSize = Math.round(S * 0.15); // 短辺の15% (1200→180)
+  const padding  = parseInt(document.getElementById('marginSlider').value) || 20;
+  const gap = 8;
+  // 位置別にグルーピング
+  const byPos = { tl: [], tr: [], bl: [] };
+  for (const m of matched) byPos[m.position].push(m);
+  // 各位置で横に並べて描画
+  for (const [pos, list] of Object.entries(byPos)){
+    if (list.length === 0) continue;
+    list.forEach((slot, i) => {
+      const img = slot.image;
+      // ロゴを logoSize×logoSize の枠に縦横比保持で収める
+      let lw = img.width, lh = img.height;
+      const sc = Math.min(logoSize / lw, logoSize / lh);
+      lw = Math.round(lw * sc); lh = Math.round(lh * sc);
+      // 各位置の起点 + 横並びオフセット
+      let bx, by;
+      if (pos === 'tl'){
+        bx = padding + i * (logoSize + gap);
+        by = padding;
+      } else if (pos === 'tr'){
+        // 右端から左に向かって並べる
+        bx = S - padding - logoSize - i * (logoSize + gap);
+        by = padding;
+      } else { // bl
+        bx = padding + i * (logoSize + gap);
+        by = S - padding - logoSize;
+      }
+      // 枠内中央に配置
+      const dx = bx + Math.round((logoSize - lw) / 2);
+      const dy = by + Math.round((logoSize - lh) / 2);
+      cx.drawImage(img, dx, dy, lw, lh);
+    });
+  }
+}
+
+// ===== アイコン合成スロット（全商品共通）=====
+const MAX_ICON_SLOTS = 30;
+const DEFAULT_ICON_SLOTS = 5;
+let iconSlots = []; // [{id, fileObj, image, position, fileName}]
+
+function addIconSlot(){
+  if (iconSlots.length >= MAX_ICON_SLOTS) return;
+  const id = 'icon_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  iconSlots.push({ id, fileObj: null, image: null, position: 'tl', fileName: '' });
+  renderIconSlots();
+}
+
+function removeIconSlot(id){
+  iconSlots = iconSlots.filter(s => s.id !== id);
+  renderIconSlots();
+}
+
+function renderIconSlots(){
+  const container = document.getElementById('iconSlots');
+  if (!container) return;
+  container.innerHTML = '';
+  iconSlots.forEach(slot => {
+    const row = document.createElement('div');
+    row.className = 'icon-slot';
+    const thumbStyle = slot.image ? `background-image:url('${slot.image.src}');` : '';
+    const thumbCls = slot.image ? 'logo-thumb' : 'logo-thumb empty';
+    row.innerHTML = `
+      <div class="${thumbCls}" style="${thumbStyle}">
+        <input type="file" accept="image/*" data-id="${slot.id}" data-field="file" title="アイコン画像を選択">
+      </div>
+      <div class="logo-filename" title="${escapeAttr(slot.fileName)}">${slot.fileName || '未選択'}</div>
+      <select data-id="${slot.id}" data-field="position">
+        <option value="tl"${slot.position==='tl'?' selected':''}>左上</option>
+        <option value="tr"${slot.position==='tr'?' selected':''}>右上</option>
+        <option value="bl"${slot.position==='bl'?' selected':''}>左下</option>
+      </select>
+      <button type="button" class="delete-btn" onclick="removeIconSlot('${slot.id}')" title="削除">×</button>
+    `;
+    container.appendChild(row);
+  });
+  container.querySelectorAll('input[type=file][data-field=file]').forEach(inp => {
+    inp.addEventListener('change', async e => {
+      const slot = iconSlots.find(s => s.id === e.target.dataset.id);
+      if (!slot || !e.target.files[0]) return;
+      const f = e.target.files[0];
+      slot.fileObj = f;
+      slot.fileName = f.name;
+      try {
+        slot.image = await loadImg(f);
+      } catch(err) {
+        slot.image = null;
+        log(`アイコン画像の読込失敗: ${f.name}`, 'err');
+      }
+      renderIconSlots();
+    });
+  });
+  container.querySelectorAll('select[data-field=position]').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const slot = iconSlots.find(s => s.id === e.target.dataset.id);
+      if (slot) slot.position = e.target.value;
+    });
+  });
+  const cnt = document.getElementById('iconSlotCount');
+  if (cnt) cnt.textContent = `${iconSlots.length} / ${MAX_ICON_SLOTS}`;
+  const addBtn = document.getElementById('addIconBtn');
+  if (addBtn) addBtn.disabled = iconSlots.length >= MAX_ICON_SLOTS;
+}
+
+// アイコン合成（全商品共通、出力1にのみ描画）
+function drawIcons(cx, S){
+  const active = iconSlots.filter(s => s.image);
+  if (active.length === 0) return;
+  const sizePct = parseInt(document.getElementById('iconSizeSlider').value) || 15;
+  const iconSize = Math.round(S * sizePct / 100);
+  const margin = parseInt(document.getElementById('iconMarginSlider').value);
+  const padding = isNaN(margin) ? 20 : margin;
+  const gap = 8;
+  const byPos = { tl: [], tr: [], bl: [] };
+  for (const m of active) byPos[m.position].push(m);
+  for (const [pos, list] of Object.entries(byPos)){
+    if (list.length === 0) continue;
+    list.forEach((slot, i) => {
+      const img = slot.image;
+      let lw = img.width, lh = img.height;
+      const sc = Math.min(iconSize / lw, iconSize / lh);
+      lw = Math.round(lw * sc); lh = Math.round(lh * sc);
+      let bx, by;
+      if (pos === 'tl'){
+        bx = padding + i * (iconSize + gap);
+        by = padding;
+      } else if (pos === 'tr'){
+        bx = S - padding - iconSize - i * (iconSize + gap);
+        by = padding;
+      } else { // bl
+        bx = padding + i * (iconSize + gap);
+        by = S - padding - iconSize;
+      }
+      const dx = bx + Math.round((iconSize - lw) / 2);
+      const dy = by + Math.round((iconSize - lh) / 2);
+      cx.drawImage(img, dx, dy, lw, lh);
+    });
+  }
+}
 
 // 全角→半角＋小文字変換
 function toHalfLower(str){
@@ -1116,16 +1411,45 @@ async function aiRemoveBg(ctx, canvas, shadowStrength){
   //   A群代表 76067/68/26 は 50〜65% で踏みとどまっているため、閾値 70% で線引き
   // [v8.16-2] 旧 fgRatio<0.25 はロジック逆向きだったため fgRatio>0.65 に修正
   // [v8.16-3] 白背景判定が canvas レンダリングで信頼できなかったため isWhiteBg 条件を削除し、占有率のみで判定。
-  //           閾値 65% → 70% に上げて A群代表 76067 (64.6%) を確実にスキップ。
-  //           76081 (64%) は A群閾値を巻き込まずに catch する手段なし → 漏れる
-  const aiFailedB = fgRatio > 0.70;
-  if (aiFailedB) {
-    if (typeof log === 'function') {
-      log(`[WARN] B群検知（高占有率 ${(fgRatio*100).toFixed(1)}% > 70%）→ 矩形クロップに切り替え`);
+  // [v8.16-4] C群（占有率高いが商品が画像をきれいに埋めている）を巻き込まないよう bbox 占有率チェックを追加
+  //   B群: マスクが画像端まで広がる → bbox ≈ 99%
+  //   C群: マスクが商品にきれいに収まる → bbox < 90%
+  //   閾値 0.92 で線引き（C群を救う、B群は確実に捕捉）
+  if (fgRatio > 0.70) {
+    // bbox 計算
+    let minX = W, minY = H, maxX = -1, maxY = -1;
+    for (let y = 0; y < H; y++){
+      for (let x = 0; x < W; x++){
+        if (mask[y * W + x] >= 128){
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
     }
-    const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
-    chromaticRectCrop(ctx, W, H, 25, 200, margin);
-    return;
+    let bboxRatio = 0;
+    if (maxX >= 0){
+      const bboxArea = (maxX - minX + 1) * (maxY - minY + 1);
+      bboxRatio = bboxArea / N;
+      if (typeof log === 'function') {
+        log(`[DBG] 高占有率分析: bbox=${maxX-minX+1}×${maxY-minY+1} (画像比 ${(bboxRatio*100).toFixed(1)}%)`);
+      }
+    }
+    if (bboxRatio > 0.92) {
+      // B群: マスクが画像端まで広がっている
+      if (typeof log === 'function') {
+        log(`[WARN] B群検知（占有率 ${(fgRatio*100).toFixed(1)}% / bbox ${(bboxRatio*100).toFixed(1)}% > 92%）→ 矩形クロップに切り替え`);
+      }
+      const margin = Math.min(150, Math.round(Math.min(W, H) * 0.125));
+      chromaticRectCrop(ctx, W, H, 25, 200, margin);
+      return;
+    } else {
+      // C群: 占有率は高いが商品が画像中央にきれいに収まっている → AI採用継続
+      if (typeof log === 'function') {
+        log(`[DBG] C群判定（占有率 ${(fgRatio*100).toFixed(1)}% / bbox ${(bboxRatio*100).toFixed(1)}% ≤ 92%）→ AI継続`);
+      }
+    }
   }
 
   // [v8.13] AI失敗時の処理：removeWhiteBg を試して、結果を「塊数」で評価する
@@ -1643,7 +1967,7 @@ function cropTo(src, box){
   return out;
 }
 
-async function processOne(imgFile,prodFile){
+async function processOne(imgFile,prodFile,matchedLogos){
   const S=1200,ratio=parseInt(document.getElementById('ratioSlider').value)/100;
   const thresh=parseInt(document.getElementById('bgThresh').value);
   const margin=parseInt(document.getElementById('marginSlider').value);
@@ -1702,6 +2026,12 @@ async function processOne(imgFile,prodFile){
     let pw = crop.width, ph = crop.height;
     if (pw > ms || ph > ms) { const s = Math.min(ms/pw, ms/ph); pw = Math.round(pw*s); ph = Math.round(ph*s); }
     cx.drawImage(crop, 0, 0, crop.width, crop.height, S - pw - margin, S - ph - margin, pw, ph);
+    // ロゴ合成（条件付き、出力1のみ）
+    if (matchedLogos && matchedLogos.length > 0) {
+      drawLogos(cx, S, matchedLogos);
+    }
+    // アイコン合成（全商品共通、出力1のみ）
+    drawIcons(cx, S);
     results.push({ canvas: c, num: 1 });
   }
 
@@ -1774,7 +2104,11 @@ async function runProcess(){
     }
     const mf=Object.entries(imgF).find(([n])=>n.includes(code))?.[1];
     try{
-      const results=await processOne(mf||null,pf);
+      const matchedLogos = getMatchingLogos(code);
+      if (matchedLogos.length > 0) {
+        log(`  ロゴ合成: ${matchedLogos.length}個 (${matchedLogos.map(s=>s.keyword).join(', ')})`);
+      }
+      const results=await processOne(mf||null,pf,matchedLogos);
       results.forEach(({canvas,num})=>{
         const fname=buildFileName(maker,code,num);
         canvas.toBlob(blob=>{ generatedFiles.push({name:fname,blob}); addCard(URL.createObjectURL(blob),fname); },'image/jpeg',0.95);
@@ -1838,6 +2172,12 @@ async function downloadAll(){
   generatedFiles.forEach(({name,blob})=>zip.file(name,blob));
   dl(URL.createObjectURL(await zip.generateAsync({type:'blob'})),'商品画像_一括.zip');
 }
+
+// ページ読み込み時：デフォルト5個のロゴスロット＋5個のアイコンスロットを表示
+document.addEventListener('DOMContentLoaded', () => {
+  for (let i = 0; i < DEFAULT_LOGO_SLOTS; i++) addLogoSlot();
+  for (let i = 0; i < DEFAULT_ICON_SLOTS; i++) addIconSlot();
+});
 </script>
 </body>
 </html>
