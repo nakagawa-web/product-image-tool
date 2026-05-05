@@ -124,7 +124,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-8</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-9</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -445,41 +445,54 @@ function getMatchingLogos(code){
 
 // ロゴ合成: cx (出力1のキャンバスコンテキスト) に matched ロゴを描画
 // S: キャンバス短辺サイズ (1200想定)
+// [v8.18-9] 高さ基準＋幅上限の二重制約に変更
+//   高さ: 短辺の 12% (1200→144px) を基準に縦横比保持で配置
+//   幅上限: 短辺の 25% (1200→300px) を超える場合は幅基準で縮小
+//   → 横長ロゴ（例: 銀座千疋屋 3.75:1）は幅で律速されて高さが約80pxに
+//   → 正方形/縦長ロゴは高さで律速されて高さ144px、横並び時に高さが揃う
+//   複数ロゴは「上端揃え＋実幅で詰める」横並び（旧: 正方形枠で揃える）
 function drawLogos(cx, S, matched){
   if (!matched || matched.length === 0) return;
-  const logoSize = Math.round(S * 0.225); // 短辺の22.5% (1200→270) [v8.18-6: 15%→22.5%]
+  const logoH = Math.round(S * 0.12);   // 高さ基準: 短辺の12%
+  const wCap  = Math.round(S * 0.25);   // 幅上限: 短辺の25%
   const padding  = parseInt(document.getElementById('marginSlider').value) || 20;
   const gap = 8;
-  // 位置別にグルーピング
+  // 各ロゴの実描画サイズを事前計算（位置決めに必要なため）
+  const sized = matched.map(slot => {
+    const img = slot.image;
+    let lh = logoH;
+    let lw = Math.round(img.width * (lh / img.height));
+    if (lw > wCap){
+      lw = wCap;
+      lh = Math.round(img.height * (lw / img.width));
+    }
+    return { slot, img, lw, lh };
+  });
+  // 位置別にグルーピング（順序は元の matched の順）
   const byPos = { tl: [], tr: [], bl: [] };
-  for (const m of matched) byPos[m.position].push(m);
-  // 各位置で横に並べて描画
+  for (const s of sized) byPos[s.slot.position].push(s);
+  // 各位置で横に並べて描画（上端／下端揃え、実幅 + gap で詰める）
   for (const [pos, list] of Object.entries(byPos)){
     if (list.length === 0) continue;
-    list.forEach((slot, i) => {
-      const img = slot.image;
-      // ロゴを logoSize×logoSize の枠に縦横比保持で収める
-      let lw = img.width, lh = img.height;
-      const sc = Math.min(logoSize / lw, logoSize / lh);
-      lw = Math.round(lw * sc); lh = Math.round(lh * sc);
-      // 各位置の起点 + 横並びオフセット
-      let bx, by;
-      if (pos === 'tl'){
-        bx = padding + i * (logoSize + gap);
-        by = padding;
-      } else if (pos === 'tr'){
-        // 右端から左に向かって並べる
-        bx = S - padding - logoSize - i * (logoSize + gap);
-        by = padding;
-      } else { // bl
-        bx = padding + i * (logoSize + gap);
-        by = S - padding - logoSize;
+    if (pos === 'tl'){
+      let cursorX = padding;
+      for (const item of list){
+        cx.drawImage(item.img, cursorX, padding, item.lw, item.lh);
+        cursorX += item.lw + gap;
       }
-      // 枠内中央に配置
-      const dx = bx + Math.round((logoSize - lw) / 2);
-      const dy = by + Math.round((logoSize - lh) / 2);
-      cx.drawImage(img, dx, dy, lw, lh);
-    });
+    } else if (pos === 'tr'){
+      let cursorX = S - padding;
+      for (const item of list){
+        cx.drawImage(item.img, cursorX - item.lw, padding, item.lw, item.lh);
+        cursorX -= item.lw + gap;
+      }
+    } else { // bl
+      let cursorX = padding;
+      for (const item of list){
+        cx.drawImage(item.img, cursorX, S - padding - item.lh, item.lw, item.lh);
+        cursorX += item.lw + gap;
+      }
+    }
   }
 }
 
