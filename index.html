@@ -124,7 +124,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-7</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-8</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -557,6 +557,8 @@ function renderIconSlots(){
 }
 
 // アイコン合成（全商品共通、出力1にのみ描画）
+// [v8.18-8] 縦横比の異なるアイコンでも、選択した角にピッタリ揃うよう
+//   「枠内中央配置」をやめて「角アンカー配置」に変更
 function drawIcons(cx, S){
   const active = iconSlots.filter(s => s.image);
   if (active.length === 0) return;
@@ -576,19 +578,19 @@ function drawIcons(cx, S){
       let lw = img.width, lh = img.height;
       const sc = Math.min(iconSize / lw, iconSize / lh);
       lw = Math.round(lw * sc); lh = Math.round(lh * sc);
-      let bx, by;
+      // 角アンカー（中央配置しない、選んだ角にピッタリ）
+      let dx, dy;
       if (pos === 'tl'){
-        bx = padX + i * (iconSize + gap);
-        by = padY;
+        dx = padX + i * (iconSize + gap);
+        dy = padY;
       } else if (pos === 'tr'){
-        bx = S - padX - iconSize - i * (iconSize + gap);
-        by = padY;
+        // 右端から左に向かって並べる（i個目はその分内側）
+        dx = S - padX - lw - i * (iconSize + gap);
+        dy = padY;
       } else { // bl
-        bx = padX + i * (iconSize + gap);
-        by = S - padY - iconSize;
+        dx = padX + i * (iconSize + gap);
+        dy = S - padY - lh;
       }
-      const dx = bx + Math.round((iconSize - lw) / 2);
-      const dy = by + Math.round((iconSize - lh) / 2);
       cx.drawImage(img, dx, dy, lw, lh);
     });
   }
