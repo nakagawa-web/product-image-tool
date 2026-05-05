@@ -124,7 +124,7 @@
 <div class="container">
 
   <header class="page-header">
-    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-9</span></h1>
+    <h1>商品登録用画像 自動生成ツール <span style="font-size:11px;font-weight:500;color:var(--color-text-info);background:var(--color-background-info);padding:2px 8px;border-radius:10px;vertical-align:middle;">AI背景除去</span> <span id="versionBadge" style="font-size:11px;font-weight:600;color:var(--color-text-success);background:var(--color-background-success);padding:2px 8px;border-radius:10px;vertical-align:middle;font-family:var(--font-mono);">v8.18-10</span></h1>
     <p>ファイル名を半角小文字に統一して画像を自動生成 ／ 初回起動時にAIモデルを約45MBダウンロードします</p>
   </header>
 
@@ -445,16 +445,16 @@ function getMatchingLogos(code){
 
 // ロゴ合成: cx (出力1のキャンバスコンテキスト) に matched ロゴを描画
 // S: キャンバス短辺サイズ (1200想定)
-// [v8.18-9] 高さ基準＋幅上限の二重制約に変更
-//   高さ: 短辺の 12% (1200→144px) を基準に縦横比保持で配置
-//   幅上限: 短辺の 25% (1200→300px) を超える場合は幅基準で縮小
-//   → 横長ロゴ（例: 銀座千疋屋 3.75:1）は幅で律速されて高さが約80pxに
-//   → 正方形/縦長ロゴは高さで律速されて高さ144px、横並び時に高さが揃う
+// [v8.18-10] 高さ基準＋幅上限の二重制約に変更
+//   高さ: 短辺の 25% (1200→300px) を基準に縦横比保持で配置
+//   幅上限: 短辺の 42% (1200→504px) を超える場合は幅基準で縮小
+//   → 横長ロゴ（例: 銀座千疋屋 3.75:1）は幅で律速されて高さが約134pxに
+//   → 正方形/縦長ロゴは高さで律速されて高さ300px、横並び時に高さが揃う
 //   複数ロゴは「上端揃え＋実幅で詰める」横並び（旧: 正方形枠で揃える）
 function drawLogos(cx, S, matched){
   if (!matched || matched.length === 0) return;
-  const logoH = Math.round(S * 0.12);   // 高さ基準: 短辺の12%
-  const wCap  = Math.round(S * 0.25);   // 幅上限: 短辺の25%
+  const logoH = Math.round(S * 0.25);   // 高さ基準: 短辺の25%
+  const wCap  = Math.round(S * 0.42);   // 幅上限: 短辺の42%
   const padding  = parseInt(document.getElementById('marginSlider').value) || 20;
   const gap = 8;
   // 各ロゴの実描画サイズを事前計算（位置決めに必要なため）
